@@ -22,6 +22,7 @@ IMPORT YOUR MODEL HERE
 """
 from vint_train.models.gnm.gnm import GNM
 from vint_train.models.vint.vint import ViNT
+from vint_train.models.vint.pointgoal_vint import PointGoalViNT
 from vint_train.models.vint.vit import ViT
 from vint_train.models.nomad.nomad import NoMaD, DenseNetwork
 from vint_train.models.nomad.nomad_vint import NoMaD_ViNT, replace_bn_with_gn
@@ -165,6 +166,21 @@ def main(config):
             mha_num_attention_layers=config["mha_num_attention_layers"],
             mha_ff_dim_factor=config["mha_ff_dim_factor"],
         )
+    elif config["model_type"] == "pointgoal_vint":
+        if config["goal_type"] != "pointgoal":
+            raise ValueError("pointgoal_vint requires goal_type: pointgoal")
+        model = PointGoalViNT(
+            context_size=config["context_size"],
+            len_traj_pred=config["len_traj_pred"],
+            learn_angle=config["learn_angle"],
+            obs_encoder=config["obs_encoder"],
+            obs_encoding_size=config["obs_encoding_size"],
+            mha_num_attention_heads=config["mha_num_attention_heads"],
+            mha_num_attention_layers=config["mha_num_attention_layers"],
+            mha_ff_dim_factor=config["mha_ff_dim_factor"],
+            pointgoal_latent_size=config.get("pointgoal_latent_size", 32),
+            pointgoal_hidden_size=config.get("pointgoal_hidden_size", 256),
+        )
     elif config["model_type"] == "nomad":
         if config["vision_encoder"] == "nomad_vint":
             vision_encoder = NoMaD_ViNT(
@@ -296,11 +312,18 @@ def main(config):
 
     if "load_run" in config:  # load optimizer and scheduler after data parallel
         if "optimizer" in latest_checkpoint:
-            optimizer.load_state_dict(latest_checkpoint["optimizer"].state_dict())
+            optimizer_state = latest_checkpoint["optimizer"]
+            if hasattr(optimizer_state, "state_dict"):
+                optimizer_state = optimizer_state.state_dict()
+            optimizer.load_state_dict(optimizer_state)
         if scheduler is not None and "scheduler" in latest_checkpoint:
-            scheduler.load_state_dict(latest_checkpoint["scheduler"].state_dict())
+            scheduler_state = latest_checkpoint["scheduler"]
+            if scheduler_state is not None:
+                if hasattr(scheduler_state, "state_dict"):
+                    scheduler_state = scheduler_state.state_dict()
+                scheduler.load_state_dict(scheduler_state)
 
-    if config["model_type"] == "vint" or config["model_type"] == "gnm": 
+    if config["model_type"] in {"vint", "pointgoal_vint", "gnm"}:
         train_eval_loop(
             train_model=config["train"],
             model=model,
@@ -321,6 +344,8 @@ def main(config):
             alpha=config["alpha"],
             use_wandb=config["use_wandb"],
             eval_fraction=config["eval_fraction"],
+            goal_type=config["goal_type"],
+            model_type=config["model_type"],
         )
     else:
         train_eval_loop_nomad(

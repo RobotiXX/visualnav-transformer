@@ -1,0 +1,20 @@
+# PAUSED RESEARCH PROFILE: no trained PointGoal checkpoint exists. Keep the
+# mock backend only for ROS/Nav2 interface tests; do not deploy it or select it
+# for the user study. See the workspace README for the architecture, sampling,
+# collection, training, and evaluation work required before resuming.
+vint_pointgoal_inference:
+  ros__parameters:
+    backend: mock
+    context_size: 5
+    horizon_points: 5
+    horizon_distance_m: 1.25
+    checkpoint_path: ""
+    model_config_path: ""
+    device: cuda
+    # The robot adapter owns any vendor-specific camera remapping.
+    image_topic: /camera/image/compressed
+    image_type: compressed
+    robot_frame: base_link
+    service_name: /vint/pointgoal_inference
+    maximum_image_age_sec: 0.5
+    warning_throttle_sec: 2.0

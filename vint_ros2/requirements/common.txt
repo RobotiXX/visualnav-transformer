@@ -1,0 +1,6 @@
+# Install PyTorch and torchvision separately for the target CUDA or JetPack
+# release before installing these inference dependencies.
+efficientnet-pytorch
+numpy
+Pillow
+PyYAML

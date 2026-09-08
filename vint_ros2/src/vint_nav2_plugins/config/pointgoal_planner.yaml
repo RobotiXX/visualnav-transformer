@@ -1,0 +1,23 @@
+# PAUSED RESEARCH PROFILE: this planner is validated only with deterministic
+# mock inference. It must not be used for a user-study or robot task until a
+# compatible trained PointGoal checkpoint passes the README evaluation gates.
+planner_server:
+  ros__parameters:
+    planner_plugins: [ViNTPointGoal]
+    ViNTPointGoal:
+      plugin: vint_nav2_plugins/PointGoalGlobalPlanner
+      robot_frame: base_link
+      inference_service: /vint/pointgoal_inference
+      inference_timeout_sec: 0.5
+      tail_planner_plugin: nav2_theta_star_planner/ThetaStarPlanner
+      minimum_prefix_points: 2
+      maximum_prefix_start_error_m: 0.25
+      minimum_goal_progress_m: -0.25
+      collision_check_step_m: 0.025
+      collision_cost_threshold: 253
+      duplicate_tolerance_m: 0.05
+      tail:
+        how_many_corners: 8
+        w_euc_cost: 1.0
+        w_traversal_cost: 2.0
+        use_final_approach_orientation: false

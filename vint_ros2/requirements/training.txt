@@ -1,0 +1,14 @@
+# Dependencies imported by the repository's training entry point. PyTorch and
+# torchvision are installed separately for the host CUDA architecture.
+diffusers==0.11.1
+h5py
+huggingface-hub<0.26
+lmdb
+matplotlib
+opencv-python-headless
+positional-encodings
+prettytable
+tqdm
+vit-pytorch
+wandb
+warmup-scheduler

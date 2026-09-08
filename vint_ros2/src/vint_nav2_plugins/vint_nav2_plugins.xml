@@ -1,0 +1,18 @@
+<library path="vint_nav2_plugins">
+  <class
+    name="vint_nav2_plugins/PointGoalGlobalPlanner"
+    type="vint_nav2_plugins::PointGoalGlobalPlanner"
+    base_class_type="nav2_core::GlobalPlanner">
+    <description>
+      A PointGoal ViNT path-prefix planner with a conventional full-path tail.
+    </description>
+  </class>
+  <class
+    name="vint_nav2_plugins/ImageGoalController"
+    type="vint_nav2_plugins::ImageGoalController"
+    base_class_type="nav2_core::Controller">
+    <description>
+      A Nav2 controller that follows collision-checked image-goal ViNT paths.
+    </description>
+  </class>
+</library>

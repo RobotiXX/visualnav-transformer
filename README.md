@@ -16,6 +16,14 @@ General Navigation Models are general-purpose goal-conditioned visual navigation
 ## Overview
 This repository contains code for training our family of models with your own data, pre-trained model checkpoints, as well as example code to deploy it on a TurtleBot2/LoCoBot robot. The repository follows the organization from [GNM](https://github.com/PrieureDeSion/drive-any-robot).
 
+### ROS 2 Humble integration
+
+The in-progress Ubuntu 22.04, ROS 2 Humble, Nav2, and NVIDIA Jetson integration
+lives in [`vint_ros2/`](vint_ros2/README.md). Its README is the durable design,
+implementation checklist, and resume point for the ScoutMini/RWD user-study
+work. The original ROS 1 deployment remains available as a reference and is not
+used by the ROS 2 stack.
+
 - `./train/train.py`: training script to train or fine-tune the ViNT model on your custom data.
 - `./train/vint_train/models/`: contains model files for GNM, ViNT, and some baselines.
 - `./train/process_*.py`: scripts to process rosbags or other formats of robot trajectories into training data.

@@ -1,0 +1,40 @@
+vint_image_goal_inference:
+  ros__parameters:
+    # `mock` validates ROS/Nav2 wiring without weights. Use `torch` for the
+    # released checkpoint or a trusted fine-tuned checkpoint.
+    backend: mock
+    # Mock parameters only. Torch obtains context and trajectory dimensions
+    # from model_config_path and ignores horizon_points/horizon_distance_m.
+    context_size: 5
+    horizon_points: 5
+    horizon_distance_m: 1.25
+    # Torch mode requires absolute paths. The released weights pair with the
+    # installed config/vint_release_model.yaml file.
+    checkpoint_path: ""
+    model_config_path: ""
+    device: cuda
+    route_manifest: ""
+    # The robot adapter owns any vendor-specific camera remapping.
+    image_topic: /camera/image/compressed
+    image_type: compressed
+    global_plan_topic: /vint/image_goal/global_plan
+    prediction_topic: /vint/image_goal/predicted_path
+    robot_frame: base_link
+    # Refresh the entire H=5 predicted rollout at this rate. The released model
+    # learned a nominal five-step / approximately 1.25 s rollout under its
+    # original 4 Hz deployment convention. Running at 3 Hz changes how often a
+    # new rollout arrives; it does not stretch the learned rollout horizon or
+    # alter metric_waypoint_spacing_m in the model YAML. Three hertz is
+    # acceptable only if measured end-to-end inference stays below 0.33 s.
+    inference_rate_hz: 3.0
+    # Select the route image approximately this far ahead on the Nav2 plan.
+    lookahead_distance_m: 2.0
+    # Fail closed when localization or any sampled global-plan pose leaves the
+    # registered directional route by more than this distance.
+    route_corridor_tolerance_m: 1.0
+    # Do not infer from old camera observations.
+    maximum_image_age_sec: 0.5
+    # Exceeds the 3 s NavigateThroughPoses replanning period in the RWD BT.
+    maximum_plan_age_sec: 4.0
+    # Rate-limit repeated warnings without changing failure behavior.
+    warning_throttle_sec: 2.0

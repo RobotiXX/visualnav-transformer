@@ -1,0 +1,24 @@
+# Architecture paired with checkpoints/vint.pth from the official ViNT release.
+# Keep this file with the checkpoint in experiment metadata.
+model_type: vint
+obs_encoder: efficientnet-b0
+obs_encoding_size: 512
+mha_num_attention_heads: 4
+mha_num_attention_layers: 4
+mha_ff_dim_factor: 4
+late_fusion: false
+context_size: 5
+# The model predicts five cumulative robot-relative points. Their endpoint
+# distance and polyline length vary with the model output; this is not a fixed
+# five-times-metric_waypoint_spacing_m rollout.
+len_traj_pred: 5
+learn_angle: true
+image_size: [85, 64]
+normalize: true
+
+# The official ROS 1 deployment converts normalized action coordinates with
+# max_v / frame_rate = 0.2 m/s / 4 Hz = 0.05 m. This multiplies every predicted
+# x/y coordinate; it is neither a fixed distance between consecutive outputs
+# nor a controller speed limit. Re-estimate it only when fine-tuning on robot
+# data, not merely because the online inference rate changes.
+metric_waypoint_spacing_m: 0.05

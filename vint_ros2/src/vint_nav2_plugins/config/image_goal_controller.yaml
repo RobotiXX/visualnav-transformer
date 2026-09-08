@@ -1,0 +1,56 @@
+controller_server:
+  ros__parameters:
+    # This standalone fragment is composed into the stable `FollowPath` ID by
+    # `compose_nav2_profile`; task-executor behavior trees do not change.
+    controller_plugins: [ViNTImageGoal]
+    ViNTImageGoal:
+      plugin: vint_nav2_plugins/ImageGoalController
+
+      # Frame and topic contract. The inference node consumes the published
+      # global path and returns a short robot-relative path in robot_frame.
+      robot_frame: base_link
+      global_plan_topic: /vint/image_goal/global_plan
+      prediction_topic: /vint/image_goal/predicted_path
+
+      # ViNT returns an H=5 short-range rollout. Index 2 selects the third model
+      # point as the feedback target; the origin prepended to the ROS Path is
+      # not counted here. Collision checking still covers the entire rollout,
+      # including points beyond this selected control target.
+      waypoint_index: 2
+      # The ROS Path normally contains one origin plus five model points.
+      minimum_prediction_points: 2
+
+      # At 3 Hz, predictions arrive about every 0.33 s. A 0.5 s timeout gives
+      # modest scheduling margin but fails closed after a missed update.
+      prediction_timeout_sec: 0.5
+      # Command zero velocity while waiting for the first prediction. After
+      # this grace period, a missing prediction aborts FollowPath.
+      initial_prediction_grace_sec: 0.5
+      # Reject paths whose first pose is not near the robot-frame origin.
+      maximum_path_start_error_m: 0.25
+
+      # Transform the predicted path into the local-costmap frame and sample
+      # every segment at this interval. Each sample checks both its costmap
+      # cell and the full robot footprint. Cost 253 rejects inscribed,
+      # lethal, and unknown cells in the normal Nav2 cost encoding.
+      collision_check_step_m: 0.025
+      collision_cost_threshold: 253
+
+      # ViNT local control is forward-only. A selected point behind or too
+      # close to the robot aborts the controller instead of commanding reverse.
+      minimum_forward_x_m: 0.02
+
+      # v = linear_gain * waypoint_x and
+      # w = angular_gain * atan2(waypoint_y, waypoint_x), then both are
+      # clamped. Gains of 3 approximate the original waypoint/DT controller at
+      # the intended 3 Hz inference rate. Start with the original ViNT release
+      # speed limits before increasing them in supervised robot trials.
+      linear_gain: 3.0
+      angular_gain: 3.0
+      maximum_linear_speed: 0.2
+      maximum_angular_speed: 0.4
+
+      # Once the Nav2 goal checker accepts XY, rotate toward the final global
+      # goal yaw. ViNT supplies translation until this final-orientation phase.
+      final_rotation_gain: 2.0
+      final_minimum_angular_speed: 0.1

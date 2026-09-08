@@ -1,0 +1,19 @@
+vint_pointgoal_inference:
+  ros__parameters:
+    use_sim_time: true
+    backend: mock
+    context_size: 5
+    horizon_points: 5
+    # The deterministic mock points directly at the final goal and has no map
+    # context. Keep its prefix short so the Theta* tail owns obstacle avoidance
+    # during integration tests. Torch inference ignores this mock-only value.
+    horizon_distance_m: 0.05
+    checkpoint_path: ""
+    model_config_path: ""
+    device: cuda
+    image_topic: /camera/image
+    image_type: raw
+    robot_frame: base_link
+    service_name: /vint/pointgoal_inference
+    maximum_image_age_sec: 0.5
+    warning_throttle_sec: 2.0

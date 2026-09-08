@@ -1,0 +1,23 @@
+vint_image_goal_inference:
+  ros__parameters:
+    use_sim_time: true
+    backend: mock
+    context_size: 5
+    horizon_points: 5
+    horizon_distance_m: 1.25
+    checkpoint_path: ""
+    model_config_path: ""
+    device: cuda
+    route_manifest: ""
+    image_topic: /camera/image
+    image_type: raw
+    global_plan_topic: /vint/image_goal/global_plan
+    prediction_topic: /vint/image_goal/predicted_path
+    robot_frame: base_link
+    inference_rate_hz: 4.0
+    lookahead_distance_m: 2.0
+    route_corridor_tolerance_m: 1.0
+    maximum_image_age_sec: 0.5
+    # Exceeds the 3 s NavigateThroughPoses replanning period in the RWD BT.
+    maximum_plan_age_sec: 4.0
+    warning_throttle_sec: 2.0

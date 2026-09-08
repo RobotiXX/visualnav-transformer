@@ -59,7 +59,7 @@ class ViNT_Dataset(Dataset):
             end_slack (int): Number of timesteps to ignore at the end of the trajectory
             goals_per_obs (int): Number of goals to sample per observation
             normalize (bool): Whether to normalize the distances or actions
-            goal_type (str): What data type to use for the goal. The only one supported is "image" for now.
+            goal_type (str): Goal conditioning type: "image" or "pointgoal".
         """
         self.data_folder = data_folder
         self.data_split_folder = data_split_folder
@@ -100,6 +100,14 @@ class ViNT_Dataset(Dataset):
         self.normalize = normalize
         self.obs_type = obs_type
         self.goal_type = goal_type
+        if self.goal_type not in {"image", "pointgoal"}:
+            raise ValueError(
+                f"Unsupported goal type {self.goal_type}; expected image or pointgoal"
+            )
+        if self.goal_type == "pointgoal" and self.negative_mining:
+            raise ValueError(
+                "PointGoal training does not support cross-trajectory negative mining"
+            )
 
         # load data/data_config.yaml
         with open(
@@ -192,7 +200,10 @@ class ViNT_Dataset(Dataset):
         Sample a goal from the future in the same trajectory.
         Returns: (trajectory_name, goal_time, goal_is_negative)
         """
-        goal_offset = np.random.randint(0, max_goal_dist + 1)
+        minimum_offset = 0 if self.negative_mining else 1
+        if max_goal_dist < minimum_offset:
+            raise ValueError("No valid future goal is available for this sample")
+        goal_offset = np.random.randint(minimum_offset, max_goal_dist + 1)
         if goal_offset == 0:
             trajectory_name, goal_time = self._sample_negative()
             return trajectory_name, goal_time, True

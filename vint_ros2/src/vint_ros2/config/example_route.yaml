@@ -1,0 +1,19 @@
+schema_version: "1.0"
+route_id: example_a_to_b
+map_id: example_map
+frame_id: map
+source_waypoint_id: example.floor_1.destination_a
+destination_waypoint_id: example.floor_1.destination_b
+nodes:
+  - index: 0
+    image: images/000000.jpg
+    stamp_ns: 1000000000
+    pose: {x: 0.0, y: 0.0, yaw: 0.0}
+  - index: 1
+    image: images/000001.jpg
+    stamp_ns: 2000000000
+    pose: {x: 1.0, y: 0.0, yaw: 0.0}
+  - index: 2
+    image: images/000002.jpg
+    stamp_ns: 3000000000
+    pose: {x: 2.0, y: 0.5, yaw: 0.25}

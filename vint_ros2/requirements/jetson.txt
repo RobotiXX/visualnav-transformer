@@ -1,0 +1,4 @@
+-r common.txt
+
+# Install NVIDIA's JetPack-matched PyTorch and torchvision wheels first.
+# A workstation CUDA wheel is not compatible with Jetson's aarch64 platform.

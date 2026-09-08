@@ -38,6 +38,8 @@ def train_eval_loop(
     learn_angle: bool = True,
     use_wandb: bool = True,
     eval_fraction: float = 0.25,
+    goal_type: str = "image",
+    model_type: str = "vint",
 ):
     """
     Train and evaluate the model for several epochs (vint or gnm models)
@@ -88,6 +90,7 @@ def train_eval_loop(
                 image_log_freq=image_log_freq,
                 num_images_log=num_images_log,
                 use_wandb=use_wandb,
+                goal_type=goal_type,
             )
 
         avg_total_test_loss = []
@@ -111,19 +114,28 @@ def train_eval_loop(
                 num_images_log=num_images_log,
                 use_wandb=use_wandb,
                 eval_fraction=eval_fraction,
+                goal_type=goal_type,
             )
 
             avg_total_test_loss.append(total_eval_loss)
 
+        state_dict = (
+            model.module.state_dict()
+            if isinstance(model, nn.DataParallel)
+            else model.state_dict()
+        )
         checkpoint = {
+            "format_version": 1,
+            "model_type": model_type,
             "epoch": epoch,
-            "model": model,
-            "optimizer": optimizer,
+            "state_dict": state_dict,
+            "optimizer": optimizer.state_dict(),
             "avg_total_test_loss": np.mean(avg_total_test_loss),
-            "scheduler": scheduler
+            "scheduler": scheduler.state_dict() if scheduler is not None else None
         }
         # log average eval loss
-        wandb.log({}, commit=False)
+        if use_wandb:
+            wandb.log({}, commit=False)
 
         if scheduler is not None:
             # scheduler calls based on the type of scheduler
@@ -131,17 +143,19 @@ def train_eval_loop(
                 scheduler.step(np.mean(avg_total_test_loss))
             else:
                 scheduler.step()
-        wandb.log({
-            "avg_total_test_loss": np.mean(avg_total_test_loss),
-            "lr": optimizer.param_groups[0]["lr"],
-        }, commit=False)
+        if use_wandb:
+            wandb.log({
+                "avg_total_test_loss": np.mean(avg_total_test_loss),
+                "lr": optimizer.param_groups[0]["lr"],
+            }, commit=False)
 
         numbered_path = os.path.join(project_folder, f"{epoch}.pth")
         torch.save(checkpoint, latest_path)
         torch.save(checkpoint, numbered_path)  # keep track of model at every epoch
 
     # Flush the last set of eval logs
-    wandb.log({})
+    if use_wandb:
+        wandb.log({})
     print()
 
 def train_eval_loop_nomad(
@@ -287,6 +301,13 @@ def load_model(model, model_type, checkpoint: dict) -> None:
     if model_type == "nomad":
         state_dict = checkpoint
         model.load_state_dict(state_dict, strict=False)
+    elif "state_dict" in checkpoint:
+        checkpoint_type = checkpoint.get("model_type")
+        if checkpoint_type is not None and checkpoint_type != model_type:
+            raise ValueError(
+                f"Checkpoint model type {checkpoint_type} does not match {model_type}"
+            )
+        model.load_state_dict(checkpoint["state_dict"], strict=True)
     else:
         loaded_model = checkpoint["model"]
         try:

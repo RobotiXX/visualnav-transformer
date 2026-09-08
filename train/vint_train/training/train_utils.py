@@ -180,6 +180,7 @@ def train(
     num_images_log: int = 8,
     use_wandb: bool = True,
     use_tqdm: bool = True,
+    goal_type: str = "image",
 ):
     """
     Train the model for one epoch.
@@ -253,8 +254,11 @@ def train(
 
         viz_goal_image = TF.resize(goal_image, VISUALIZATION_IMAGE_SIZE)
         
-        goal_image = transform(goal_image).to(device)
-        model_outputs = model(obs_image, goal_image)
+        if goal_type == "pointgoal":
+            model_goal = goal_pos.to(device)
+        else:
+            model_goal = transform(goal_image).to(device)
+        model_outputs = model(obs_image, model_goal)
 
         dist_label = dist_label.to(device)
         action_label = action_label.to(device)
@@ -322,6 +326,7 @@ def evaluate(
     use_wandb: bool = True,
     eval_fraction: float = 1.0,
     use_tqdm: bool = True,
+    goal_type: str = "image",
 
 ):
     """
@@ -392,8 +397,11 @@ def evaluate(
 
             viz_goal_image = TF.resize(goal_image, VISUALIZATION_IMAGE_SIZE)
 
-            goal_image = transform(goal_image).to(device)
-            model_outputs = model(obs_image, goal_image)
+            if goal_type == "pointgoal":
+                model_goal = goal_pos.to(device)
+            else:
+                model_goal = transform(goal_image).to(device)
+            model_outputs = model(obs_image, model_goal)
 
             dist_label = dist_label.to(device)
             action_label = action_label.to(device)
@@ -1173,5 +1181,4 @@ def visualize_diffusion_action_distribution(
         plt.close(fig)
     if len(wandb_list) > 0 and use_wandb:
         wandb.log({f"{eval_type}_action_samples": wandb_list}, commit=False)
-
 

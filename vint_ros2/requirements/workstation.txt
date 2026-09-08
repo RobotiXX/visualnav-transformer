@@ -1,0 +1,5 @@
+-r common.txt
+-r training.txt
+
+# The Ubuntu 22.04 workstation uses an official CUDA-enabled PyTorch wheel.
+# Do not add torch here because its index URL depends on the selected CUDA build.

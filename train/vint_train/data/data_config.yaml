@@ -60,4 +60,9 @@ carla:
 sacson:
   metric_waypoint_spacing: 0.255
 
+scoutmini:
+  # Replace this initial value with the measured mean/median spacing printed by
+  # `ros2 run vint_ros2 prepare_dataset` for the finalized collection protocol.
+  metric_waypoint_spacing: 0.25
+
 # add your own dataset params here:

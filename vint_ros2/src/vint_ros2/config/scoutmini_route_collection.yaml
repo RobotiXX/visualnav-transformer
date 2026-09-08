@@ -1,0 +1,19 @@
+image_topic: /camera/image/compressed
+image_type: compressed
+pose_topic: /vint/map_pose
+fixed_frame: map
+robot_frame: base_link
+transform_timeout_sec: 0.1
+warning_throttle_sec: 2.0
+storage_id: mcap
+max_cache_size: 104857600
+topics:
+  - /camera/camera_info
+  - /cmd_vel
+  - /map_name
+  - /plan
+  - /rko_lio/odom
+  - /scan
+  - /task_status
+  - /tf
+  - /tf_static
