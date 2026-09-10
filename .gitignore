@@ -4,6 +4,7 @@ train/vint_train/data/data_splits/*
 train/wandb/*
 train/gnm_dataset/*
 *_test.yaml
+!vint_ros2/src/vint_nav2_plugins/test/image_goal_controller_test.yaml
 
 *.png
 *.jpg

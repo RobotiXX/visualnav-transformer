@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import importlib
 from pathlib import Path
 import sys
+import time
 import types
 from typing import Any, Mapping, Protocol, Sequence
 
@@ -87,6 +88,13 @@ class InferenceBackend(Protocol):
     ) -> ModelPrediction:
         """Predict a trajectory conditioned on an image goal."""
 
+    def predict_image_goals(
+        self,
+        observations: Sequence[Image.Image],
+        goal_images: Sequence[Image.Image],
+    ) -> tuple[ModelPrediction, ...]:
+        """Predict trajectories for a temporal neighborhood of image goals."""
+
     def predict_point_goal(
         self,
         observations: Sequence[Image.Image],
@@ -141,6 +149,19 @@ class MockInferenceBackend:
         return ModelPrediction(
             distance=float(self._horizon_points),
             trajectory=points,
+        )
+
+    def predict_image_goals(
+        self,
+        observations: Sequence[Image.Image],
+        goal_images: Sequence[Image.Image],
+    ) -> tuple[ModelPrediction, ...]:
+        """Return one deterministic prediction for every candidate goal."""
+        if not goal_images:
+            raise ModelBackendError('At least one image goal is required.')
+        return tuple(
+            self.predict_image_goal(observations, goal)
+            for goal in goal_images
         )
 
     def predict_point_goal(
@@ -261,6 +282,22 @@ class TorchViNTBackend:
         self._load_weights(checkpoint)
         self._model.to(self._device)
         self._model.eval()
+        self.warmup_seconds = self._warm_up()
+
+    def _warm_up(self) -> float:
+        """Initialize model kernels before a live Nav2 goal needs a prediction."""
+        start = time.perf_counter()
+        blank = Image.new('RGB', self._image_size)
+        observations = tuple(
+            blank.copy() for _ in range(self.context_size + 1)
+        )
+        if self._mode == 'image_goal':
+            self.predict_image_goal(observations, blank)
+        else:
+            self.predict_point_goal(observations, (1.0, 0.0))
+        if self._device.type == 'cuda':
+            self._torch.cuda.synchronize(self._device)
+        return time.perf_counter() - start
 
     def _build_model(self):
         common = {
@@ -337,24 +374,31 @@ class TorchViNTBackend:
         ]
         return torch.cat(tensors, dim=1).to(self._device)
 
-    def _prediction(self, model_output) -> ModelPrediction:
+    def _predictions(self, model_output) -> tuple[ModelPrediction, ...]:
         distance, action = model_output
-        distance_value = float(distance.detach().cpu().reshape(-1)[0])
-        values = action.detach().cpu().numpy()[0]
-        points = []
-        for value in values:
-            heading_x = float(value[2]) if len(value) >= 4 else None
-            heading_y = float(value[3]) if len(value) >= 4 else None
-            points.append(TrajectoryPoint(
-                x=float(value[0]) * self._metric_scale,
-                y=float(value[1]) * self._metric_scale,
-                heading_x=heading_x,
-                heading_y=heading_y,
+        distances = distance.detach().cpu().reshape(-1)
+        actions = action.detach().cpu().numpy()
+        if len(distances) != len(actions):
+            raise ModelBackendError(
+                'ViNT distance and trajectory batch sizes do not match.'
+            )
+        predictions = []
+        for distance_value, values in zip(distances, actions):
+            points = []
+            for value in values:
+                heading_x = float(value[2]) if len(value) >= 4 else None
+                heading_y = float(value[3]) if len(value) >= 4 else None
+                points.append(TrajectoryPoint(
+                    x=float(value[0]) * self._metric_scale,
+                    y=float(value[1]) * self._metric_scale,
+                    heading_x=heading_x,
+                    heading_y=heading_y,
+                ))
+            predictions.append(ModelPrediction(
+                distance=float(distance_value),
+                trajectory=tuple(points),
             ))
-        return ModelPrediction(
-            distance=distance_value,
-            trajectory=tuple(points),
-        )
+        return tuple(predictions)
 
     def _observation_tensor(self, observations: Sequence[Image.Image]):
         if len(observations) != self.context_size + 1:
@@ -371,12 +415,28 @@ class TorchViNTBackend:
         """Run trusted image-goal ViNT weights."""
         if self._mode != 'image_goal':
             raise ModelBackendError('Backend is not configured for image goals.')
+        return self.predict_image_goals(observations, [goal_image])[0]
+
+    def predict_image_goals(
+        self,
+        observations: Sequence[Image.Image],
+        goal_images: Sequence[Image.Image],
+    ) -> tuple[ModelPrediction, ...]:
+        """Run the original batched local-topomap image-goal inference."""
+        if self._mode != 'image_goal':
+            raise ModelBackendError('Backend is not configured for image goals.')
+        if not goal_images:
+            raise ModelBackendError('At least one image goal is required.')
+        observation = self._observation_tensor(observations)
+        goal_batch = self._torch.cat([
+            self._transform_images([goal]) for goal in goal_images
+        ], dim=0)
         with self._torch.inference_mode():
             output = self._model(
-                self._observation_tensor(observations),
-                self._transform_images([goal_image]),
+                observation.repeat(len(goal_images), 1, 1, 1),
+                goal_batch,
             )
-        return self._prediction(output)
+        return self._predictions(output)
 
     def predict_point_goal(
         self,
@@ -397,4 +457,4 @@ class TorchViNTBackend:
                 self._observation_tensor(observations),
                 goal,
             )
-        return self._prediction(output)
+        return self._predictions(output)[0]

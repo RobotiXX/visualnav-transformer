@@ -12,32 +12,47 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from rclpy.time import Time
 from sensor_msgs.msg import CompressedImage
 from sensor_msgs.msg import Image
-from tf2_ros import Buffer
-from tf2_ros import TransformException
-from tf2_ros import TransformListener
 
 from vint_ros2.bag_conversion import BagConversionError
 from vint_ros2.bag_conversion import decode_image
 from vint_ros2.inference_common import create_backend
 from vint_ros2.inference_common import declare_backend_parameters
-from vint_ros2.inference_common import history_is_fresh
 from vint_ros2.inference_common import ImageHistory
 from vint_ros2.inference_common import prediction_to_path
 from vint_ros2.inference_common import stamp_to_nanoseconds
+from vint_ros2.model_backend import ModelPrediction
 from vint_ros2.model_backend import ModelBackendError
-from vint_ros2.route_geometry import RouteGeometryError
-from vint_ros2.route_geometry import select_route_goal
 from vint_ros2.route_manifest import load_route_manifest
+
+
+def select_topomap_prediction(
+    predictions: tuple[ModelPrediction, ...],
+    *,
+    start_index: int,
+    goal_index: int,
+    close_threshold: float,
+) -> tuple[ModelPrediction, int]:
+    """Apply the original ViNT local-topomap localization and advance rule."""
+    if not predictions:
+        raise ModelBackendError('Topomap inference returned no predictions.')
+    minimum_offset = min(
+        range(len(predictions)),
+        key=lambda index: predictions[index].distance,
+    )
+    localized_index = start_index + minimum_offset
+    if predictions[minimum_offset].distance > close_threshold:
+        return predictions[minimum_offset], localized_index
+    selected_offset = min(minimum_offset + 1, len(predictions) - 1)
+    return predictions[selected_offset], min(localized_index + 1, goal_index)
 
 
 class ImageGoalInferenceNode(Node):
     """Select registered goal images and publish image-goal ViNT paths."""
 
     def __init__(self, *, parameter_overrides=None) -> None:
-        """Initialize registered route, image history, TF, and inference loop."""
+        """Initialize registered route, image history, and inference loop."""
         super().__init__(
             'vint_image_goal_inference',
             parameter_overrides=parameter_overrides,
@@ -54,10 +69,9 @@ class ImageGoalInferenceNode(Node):
         )
         self.declare_parameter('robot_frame', 'base_link')
         self.declare_parameter('inference_rate_hz', 4.0)
-        self.declare_parameter('lookahead_distance_m', 2.0)
-        self.declare_parameter('route_corridor_tolerance_m', 1.0)
-        self.declare_parameter('maximum_image_age_sec', 0.5)
-        self.declare_parameter('maximum_plan_age_sec', 4.0)
+        self.declare_parameter('topomap_radius', 4)
+        self.declare_parameter('close_threshold', 3.0)
+        self.declare_parameter('route_destination_tolerance_m', 1.0)
         self.declare_parameter('warning_throttle_sec', 2.0)
 
         route_path = str(self.get_parameter('route_manifest').value)
@@ -68,26 +82,28 @@ class ImageGoalInferenceNode(Node):
         self._backend = create_backend(self, 'image_goal')
         self._history = ImageHistory(self._backend.context_size)
         self._robot_frame = str(self.get_parameter('robot_frame').value)
-        self._lookahead = float(
-            self.get_parameter('lookahead_distance_m').value
+        self._topomap_radius = int(
+            self.get_parameter('topomap_radius').value
         )
-        self._corridor = float(
-            self.get_parameter('route_corridor_tolerance_m').value
+        self._close_threshold = float(
+            self.get_parameter('close_threshold').value
         )
-        self._maximum_image_age = float(
-            self.get_parameter('maximum_image_age_sec').value
+        self._destination_tolerance = float(
+            self.get_parameter('route_destination_tolerance_m').value
         )
-        self._maximum_plan_age = float(
-            self.get_parameter('maximum_plan_age_sec').value
-        )
+        if self._topomap_radius < 0 or self._close_threshold < 0.0:
+            raise ValueError(
+                'topomap_radius and close_threshold must be non-negative.'
+            )
+        if self._destination_tolerance <= 0.0:
+            raise ValueError('route_destination_tolerance_m must be positive.')
         self._warning_throttle = float(
             self.get_parameter('warning_throttle_sec').value
         )
         self._last_warning = float('-inf')
         self._plan_lock = Lock()
-        self._inference_lock = Lock()
         self._global_plan = None
-        self._previous_goal_index = 0
+        self._closest_node = 0
         self._plan_destination = None
 
         image_type = str(self.get_parameter('image_type').value).lower()
@@ -99,8 +115,6 @@ class ImageGoalInferenceNode(Node):
             raise ValueError(
                 "image_type must be either 'raw' or 'compressed'."
             )
-        self._tf_buffer = Buffer()
-        self._tf_listener = TransformListener(self._tf_buffer, self)
         self._image_group = ReentrantCallbackGroup()
         self._inference_group = MutuallyExclusiveCallbackGroup()
         self._image_subscription = self.create_subscription(
@@ -157,7 +171,8 @@ class ImageGoalInferenceNode(Node):
             plan.poses[-1].pose.position.y,
         )
         expected = self._route.nodes[-1].pose
-        if math.dist(destination, (expected.x, expected.y)) > self._corridor:
+        if (math.dist(destination, (expected.x, expected.y)) >
+                self._destination_tolerance):
             self._warn(
                 'Ignoring a global plan whose destination does not match the '
                 f"configured route '{self._route.route_id}'."
@@ -166,7 +181,7 @@ class ImageGoalInferenceNode(Node):
         with self._plan_lock:
             if (self._plan_destination is None or
                     math.dist(destination, self._plan_destination) > 0.25):
-                self._previous_goal_index = 0
+                self._closest_node = 0
             self._plan_destination = destination
             self._global_plan = plan
 
@@ -181,58 +196,47 @@ class ImageGoalInferenceNode(Node):
 
     def _infer(self) -> None:
         observations, image_stamp = self._history.snapshot()
-        now_ns = self.get_clock().now().nanoseconds
-        if not history_is_fresh(
-            observations,
-            image_stamp,
-            required_count=self._history.capacity,
-            now_ns=now_ns,
-            maximum_age_sec=self._maximum_image_age,
-        ):
+        if (len(observations) != self._history.capacity or
+                image_stamp is None):
             return
         with self._plan_lock:
             plan = self._global_plan
-            previous_goal = self._previous_goal_index
+            closest_node = self._closest_node
         if plan is None or plan.header.frame_id != self._route.frame_id:
             return
-        plan_stamp_ns = stamp_to_nanoseconds(plan.header.stamp)
-        if not 0 <= now_ns - plan_stamp_ns <= self._maximum_plan_age * 1e9:
-            self._warn('Global plan is stale; no image-goal prediction published.')
-            return
+        goal_index = len(self._route.nodes) - 1
+        start = max(closest_node - self._topomap_radius, 0)
+        end = min(
+            closest_node + self._topomap_radius + 1,
+            goal_index,
+        )
+        candidate_indices = tuple(range(start, end + 1))
         try:
-            transform = self._tf_buffer.lookup_transform(
-                self._route.frame_id,
-                self._robot_frame,
-                Time(nanoseconds=image_stamp),
+            predictions = self._backend.predict_image_goals(
+                observations,
+                tuple(self._goal_image(index) for index in candidate_indices),
             )
-            robot = (
-                transform.transform.translation.x,
-                transform.transform.translation.y,
-            )
-            selection = select_route_goal(
-                self._route,
-                robot,
-                tuple((pose.pose.position.x, pose.pose.position.y)
-                      for pose in plan.poses),
-                lookahead_distance=self._lookahead,
-                corridor_tolerance=self._corridor,
-                previous_goal_index=previous_goal,
-            )
-            with self._inference_lock:
-                prediction = self._backend.predict_image_goal(
-                    observations,
-                    self._goal_image(selection.goal_index),
+            if len(predictions) != len(candidate_indices):
+                raise ModelBackendError(
+                    'Topomap inference result count does not match its goals.'
                 )
-        except (TransformException, RouteGeometryError,
-                ModelBackendError, OSError) as error:
+            prediction, closest_node = select_topomap_prediction(
+                predictions,
+                start_index=start,
+                goal_index=goal_index,
+                close_threshold=self._close_threshold,
+            )
+        except (ModelBackendError, OSError) as error:
             self._warn(f'Image-goal inference skipped: {error}')
             return
         with self._plan_lock:
-            self._previous_goal_index = max(
-                self._previous_goal_index,
-                selection.goal_index,
-            )
-        stamp = Time(nanoseconds=image_stamp).to_msg()
+            self._closest_node = closest_node
+        # The ROS 1 node publishes a newly received waypoint after every
+        # inference, even when its camera context has not changed.  Stamp the
+        # prediction at inference time so the controller's one-second timeout
+        # describes loss of inference output, as its ROS 1 subscriber timeout
+        # did, rather than adding an image-age safety policy.
+        stamp = self.get_clock().now().to_msg()
         self._publisher.publish(prediction_to_path(
             prediction,
             frame_id=self._robot_frame,

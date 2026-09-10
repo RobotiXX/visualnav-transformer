@@ -28,7 +28,7 @@ image-goal checkpoint, then run an operator-submitted dashboard task with
 `VINT_MODE=image_goal_local`. PointGoal model development is intentionally
 paused; its interfaces and deterministic mock remain for later work, but it is
 not a user-study profile. Image-goal controller lifecycle, cancellation,
-stale-prediction abort, and zero-command behavior are covered by automated
+one-second prediction expiry, and zero-command behavior are covered by automated
 tests. No trained ViNT profile has yet moved the simulated or real robot.
 
 ## Why this is not a literal ROS 1 port
@@ -86,69 +86,78 @@ the local-controller position:
 ```text
 semantic destination
   -> RWD task planner and executor
-  -> Nav2 Theta* global path
-  -> metric lookahead on a registered visual route
+  -> Nav2 Theta* global path (route activation and destination check)
+  -> ViNT distance-based local topomap search
   -> image-goal ViNT
-  -> robot-relative predicted path
-  -> vint_nav2_plugins controller
-  -> Nav2 collision checks and velocity output
+  -> third robot-relative predicted waypoint
+  -> original ViNT PD conversion in a Nav2 controller plugin
+  -> Nav2 velocity output
 ```
 
 The registered visual route contains ordered camera observations and map-frame
-poses. The selector projects a configurable lookahead point from the Nav2 path
-onto that route and chooses the corresponding goal image. The selector fails
-closed when localization is stale, the route direction is wrong, or the global
-path leaves the recorded route corridor.
+poses. Registration identifies which directional route belongs to the Nav2
+task, but it does not change ViNT's local navigation algorithm. As in
+`deployment/src/navigate.py`, the inference node searches a temporal
+neighborhood around its current topomap index, runs the distance and action
+heads for all candidate goal images in one batch, and advances to the image
+after the closest candidate when its predicted distance is at most the close
+threshold.
 
 This mode can use the released image-goal checkpoint. A route must be recorded
 for each travel direction because a forward-facing image sequence recorded from
 A to B is not an equivalent visual goal sequence for B to A.
 
-#### ROS 2 and Nav2 adaptation
+#### Fidelity to the original ROS 1 deployment
 
-The adaptation keeps the released ViNT architecture, six-image observation
-history, image-goal input, five robot-relative predicted points, and the
-original convention of selecting a predicted waypoint for feedback control. It
-changes how long-range goals and robot motion are managed. Theta* supplies a
-map-frame global path, and the inference node projects a metric lookahead point
-onto a direction-specific visual route. The corresponding route image becomes
-ViNT's goal image. The Python node publishes the predicted path in
-`base_link`; the Nav2 controller transforms that path at the current robot pose,
-validates it against the local costmap, and commands
-`v = linear_gain * x` and
-`w = angular_gain * atan2(y, x)`, subject to configured speed limits. Nav2's
-goal checker owns task completion, and the controller uses the final goal yaw
-only after entering its XY tolerance.
+The study profile intentionally preserves nominal ViNT behavior and limits the
+adapter to the interfaces required by Nav2. The comparison below uses
+`deployment/src/navigate.py`, `deployment/src/pd_controller.py`, and
+`deployment/config/robot.yaml` as the executable reference.
 
-Compared with the original ROS 1 deployment, this integration adds six
-capabilities: ROS 2 lifecycle and action cancellation, RWD semantic task
-execution, an occupancy-grid global path, explicit metric registration of each
-visual route, local-costmap footprint checks, and fail-closed freshness and
-route-corridor checks. The original deployment searched a temporal neighborhood
-of an unregistered image topomap using ViNT's distance prediction, sent one
-selected waypoint through a float-array topic, and used a separate PD node to
-publish velocity commands directly. In this integration, the Python inference
-node publishes only the predicted ROS path; the C++ controller plugin computes
-and returns a velocity command, and Nav2's controller server publishes that
-command on `/cmd_vel`. This integration does not use the distance head for
-topological localization.
+| Behavior | Original ROS 1 deployment | ROS 2/Nav2 study profile |
+|---|---|---|
+| Model | Released image-goal ViNT checkpoint | Same architecture and checkpoint; exact state-dictionary validation is added at load time |
+| Observation | Current image plus five context images | Same six-image tensor |
+| Image transform | Resize to `[85, 64]`, ImageNet normalization, no center crop in `navigate.py` | Same transform |
+| Route search | Batched images from `closest_node - 4` through `closest_node + 5`, clipped to the route | Same batched temporal neighborhood |
+| Topological localization | Minimum distance-head prediction | Same minimum-distance selection |
+| Node advance | Use the following image when minimum distance is at most `3` | Same threshold and advance rule |
+| Inference rate | `4 Hz` | `4 Hz` |
+| Control rate | PD node runs at `9 Hz` and holds the latest waypoint | Nav2 controller runs at the common `10 Hz` study rate and holds the latest prediction |
+| Metric conversion | Multiply normalized X/Y by `0.2 / 4 = 0.05 m` | Same `0.05 m` scale |
+| Control target | Predicted waypoint index `2` (the third of five points) | Same waypoint index |
+| PD conversion | `v=x/DT`; `w=atan(y/x)/DT`; predicted heading only when X/Y are nearly zero | Same equations with `DT=0.25 s` |
+| Command limits | Forward velocity `[0, 0.2] m/s`; yaw rate `[-0.4, 0.4] rad/s` | Same limits before any common platform-level limiting |
+| Lost waypoint | PD input expires after one second and no new motion is published | A missing or one-second-old prediction returns zero velocity without aborting the Nav2 goal |
+| Camera stops after context is full | Inference continues from the retained context | Same behavior; the inference-time prediction stamp does not add a camera-age gate |
+| Collision checking | None in `navigate.py` or `pd_controller.py` | None in `ImageGoalController`; the local costmap does not veto ViNT output |
+| Final orientation | No separate goal-yaw rotation | No adapter-added final rotation; the study goal checker accepts any yaw |
 
-#### Safety boundary
+Six integration differences remain. First, route images are stored in a
+metric manifest so the task can select the correct A-to-B route; the map poses
+do not select the local goal image. Second, the Nav2 global plan identifies the
+active destination but does not steer, prune, replace, or collision-check the
+ViNT rollout. Third, the Python node publishes the five predicted points as a
+stamped `nav_msgs/Path`, while the C++ plugin performs the original PD
+conversion and returns `TwistStamped` to the controller server. Fourth, the
+controller callback runs at the common 10 Hz study rate instead of the ROS 1
+PD node's 9 Hz rate, while both hold each 4 Hz model output between updates.
+Fifth, Nav2 owns action lifecycle, cancellation, a 15-second shared progress
+check, speed-limit requests, and metric goal completion instead of terminating
+when the topomap index reaches its last image. Sixth, the common Nav2 velocity
+smoother can enforce platform acceleration limits after the ViNT controller's
+original velocity clamps. These differences are necessary for the common
+task-execution boundary and are recorded as part of the experimental system
+rather than attributed to ViNT.
 
-The controller rejects a prediction with the wrong frame, too few points, an
-origin too far from the robot, a stale timestamp, backward motion, or any sample
-whose costmap cell or complete padded footprint reaches the configured cost
-threshold. Every segment is sampled at `collision_check_step_m`, not only at
-the five predicted endpoints. Missing predictions command zero during the
-initial grace interval and then abort `FollowPath`; stale or colliding
-predictions abort immediately. Cancellation and terminal action handling pass
-through Nav2, which publishes a zero command when the action ends.
+#### Evaluation safety boundary
 
-These checks are a conservative execution gate, not a formal safety system.
-They only know obstacles represented in the current local costmap and inherit
-its sensor coverage, update latency, footprint calibration, and unknown-space
-policy. Hardware emergency stopping and the robot's independent collision
-protection remain necessary.
+The image-goal adapter performs message-contract checks for a valid frame,
+point count, origin, finite values, and timestamp. These checks reject malformed
+transport data but do not alter valid model trajectories. In particular, the
+adapter does not query the Nav2 costmap or add obstacle-based trajectory
+selection. Operator supervision, emergency stopping, and any platform-level
+safeguards therefore remain outside the evaluated ViNT policy.
 
 ### Mode B: ViNT-PointGoal as a Nav2 global planner (paused)
 
@@ -487,6 +496,11 @@ for its missing warmup-scheduler class and loads the trusted checkpoint onto
 CPU before transferring only model weights to the configured device. Do not
 use this legacy unpickling path for an untrusted checkpoint.
 
+After loading the weights, the Torch backend runs one discarded synthetic
+inference in the selected mode. This startup warmup initializes CUDA kernels
+before the node accepts a live global path, preventing startup latency from
+affecting the first measured prediction.
+
 The inference nodes can be exercised independently:
 
 ```bash
@@ -502,7 +516,7 @@ Neither node publishes `/cmd_vel`. The image-goal node publishes a short
 `base_link` path for its Nav2 controller, while the PointGoal node serves a
 correlated `nav_msgs/srv/GetPlan` request from its Nav2 planner plugin.
 
-#### Released-checkpoint validation and 3 Hz deployment
+#### Released-checkpoint validation and 4 Hz deployment
 
 The official 430 MB `checkpoints/vint.pth` was loaded through
 `TorchViNTBackend` on the development workstation's RTX 3090 Ti. With synthetic
@@ -513,25 +527,26 @@ This smoke test verifies checkpoint format, architecture configuration, CUDA
 execution, and output shape; synthetic images cannot establish whether the
 policy will follow a recorded route.
 
-The target robot loop is 3 Hz, or one new prediction every 0.333 s. The Nav2
-controller may run faster and reuse the most recent stamped prediction, but the
-default 0.5 s timeout leaves only about 0.167 s of margin beyond one nominal
-inference period. One delayed camera frame, inference cycle, or DDS delivery can
-therefore abort `FollowPath`. Before motion, measure model warmup and sustained
-p50, p95, and p99 end-to-end latency on the Jetson, including image decoding,
-host/device transfer, inference, and ROS publication. Also monitor missed
-cycles, thermal throttling, camera timestamp age, and GPU memory during a
-route-length run.
+After restoring the original local-topomap algorithm, a second checkpoint
+smoke test passed six candidate goal images through one batch. The backend
+returned six finite distance predictions and one five-point trajectory per
+candidate, matching the selector's expected contract.
 
-Three hertz is lower than the original 4 Hz ViNT deployment. Consequently, an
-accepted robot-relative prediction becomes older and less geometrically
-accurate between updates, especially while turning or near obstacles. Keep the
-released model's `0.05 m` output scale: it comes from the checkpoint's training
-and original `max_v / frame_rate` normalization and is not replaced by `1 / 3`
-merely because inference runs at 3 Hz. Initial supervised trials should retain
-the original 0.2 m/s linear and 0.4 rad/s angular limits, verify that p99
-latency stays comfortably below 0.333 s, and increase `prediction_timeout_sec`
-only from measured jitter rather than to conceal missed inference.
+The target robot loop is the original 4 Hz, or one new prediction every 0.25 s.
+The Nav2 controller runs at the common 10 Hz study rate and reuses the most
+recent prediction between inference updates. Its one-second expiry reproduces
+the ROS 1 PD node's waypoint timeout; expiry returns zero velocity rather than
+aborting the Nav2 action. Before motion, measure model warmup and sustained p50,
+p95, and p99 end-to-end latency on the Jetson, including image decoding,
+host/device transfer, batched local-topomap inference, and ROS publication.
+Also monitor missed cycles, thermal throttling, camera timestamp age, and GPU
+memory during a route-length run.
+
+Keep the released model's `0.05 m` output scale because it comes from the
+checkpoint's training and original `max_v / frame_rate` normalization. Initial
+supervised trials retain the original 0.2 m/s linear and 0.4 rad/s angular
+limits. If batched inference cannot sustain 4 Hz on the robot, report the
+measured rate as a deviation rather than changing the model scale or PD gains.
 
 ### 6. Compose controlled Nav2 profiles
 
@@ -643,7 +658,8 @@ launching drivers or navigation.
 - [x] Scaffold the `vint_ros2` ament package.
 - [x] Scaffold the `vint_nav2_plugins` ament package.
 - [x] Implement and validate the registered-route manifest.
-- [x] Implement path projection, monotonic lookahead, and route-corridor checks.
+- [x] Implement registered path projection and route-corridor utilities for
+  PointGoal experiments without using them to steer image-goal ViNT.
 - [x] Add example one-way A-to-B route manifests without site data or images.
 - [x] Add package tests and a dependency-light CI path.
 
@@ -661,18 +677,18 @@ launching drivers or navigation.
 Phase 1 verification on 2026-09-06: both packages built with
 `colcon build --symlink-install --packages-select vint_ros2 vint_nav2_plugins`;
 `colcon test` reported 20 tests with zero failures or errors. The Python tests
-include manifest failure cases, route-corridor rejection, monotonic visual-goal
+include manifest failure cases, route-corridor utilities, registered topomap
 selection, and PointGoal map/robot-frame transform round trips.
 
 ### Phase 3: image-goal ViNT local policy
 
 - [x] Refactor model loading and image transforms out of the ROS 1 script.
 - [x] Add a lazy PyTorch backend and a deterministic mock backend.
-- [x] Implement the ROS 2 image history and registered-goal selector node.
+- [x] Implement ROS 2 image history and the original batched local-topomap selector.
 - [x] Publish predicted trajectories as stamped `nav_msgs/msg/Path` in `base_link`.
-- [x] Implement the Nav2 controller plugin with stale-data and collision checks.
+- [x] Implement the original PD waypoint conversion as a Nav2 controller plugin.
 - [x] Add a live mock-inference topic test and controller-server lifecycle smoke test.
-- [x] Add Nav2 action cancellation, stale-timeout, and zero-command regression tests.
+- [x] Add Nav2 cancellation, waypoint-expiry, and zero-command regression tests.
 - [x] Load the released `vint.pth` through the production backend and benchmark
   warm-up plus repeated synthetic inference on the development GPU.
 - [ ] Record a directional route and evaluate the released checkpoint in
@@ -697,16 +713,16 @@ The completed items in this phase establish interfaces and deterministic mock
 behavior only. Model training, closed-loop learned planning, and study use are
 paused according to the data-and-training plan above.
 
-Plugin verification on 2026-09-06: both packages build on ROS 2 Humble. The
-latest isolated-domain run reports 115 tests with zero errors or failures and
+Plugin verification on 2026-09-10: both packages build on ROS 2 Humble. The
+latest isolated-domain run reports 122 tests with zero errors or failures and
 11 environment-dependent lint skips.
 The Python suite includes a live mock PointGoal service request, topic-profile
 contracts, and profile composition. The C++ functional tests pass for plugin
 loading, robot-to-map prefix transforms, continuous collision-free-prefix
-truncation, complete-path joining, forward-only command generation, speed
-bounds, and final rotation bounds. The image-goal controller-server launch test
-additionally covers activation, a live prediction, cancellation, a terminal
-zero command, stale-prediction abort, and the subsequent zero command.
+truncation, and complete-path joining for the paused PointGoal planner. The
+image-goal tests cover the original topomap advance rule, PD command equations,
+speed bounds, activation, a live prediction, cancellation, waypoint expiry,
+and terminal zero commands.
 
 ### Phase 5: RWD and user-study integration
 
@@ -738,8 +754,8 @@ image-goal controller behind `FollowPath`, started mock image-goal inference,
 passed one shared context file to the executor and recorder, and verified a
 three-image route-content digest. Session termination cleaned up the supervised
 simulation. This test verifies plugin lifecycle and experiment wiring, but it
-does not replace an A-to-B trained-model navigation. Cancellation and stale
-inference are now covered by the isolated controller-server launch test.
+does not replace an A-to-B trained-model navigation. Cancellation and expired
+inference are covered by the isolated controller-server launch test.
 
 A moving headless test on isolated domain 219 submitted `FUSE 3200` from the
 simulated `lab_front` start through `ExecuteTask`. The mission remained one
@@ -760,7 +776,7 @@ The active milestone is complete when an operator can select a predefined
 single-floor destination through the existing dashboard, the normal task
 executor runs the task, and the image-goal ViNT controller can be selected
 entirely through configuration. Cancellation must stop motion, stale inference
-must fail closed, the dashboard must show the same task lifecycle as the
+must produce zero velocity, the dashboard must show the same task lifecycle as the
 classical profile, and the bag metadata must identify the model checkpoint and
 navigation profile. PointGoal has separate resume gates and is not required for
 this milestone.

@@ -12,7 +12,7 @@
     type="vint_nav2_plugins::ImageGoalController"
     base_class_type="nav2_core::Controller">
     <description>
-      A Nav2 controller that follows collision-checked image-goal ViNT paths.
+      A Nav2 controller that applies the original ViNT waypoint PD conversion.
     </description>
   </class>
 </library>

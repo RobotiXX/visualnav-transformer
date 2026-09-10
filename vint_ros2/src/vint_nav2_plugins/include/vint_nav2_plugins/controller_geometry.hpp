@@ -10,14 +10,9 @@ namespace vint_nav2_plugins
 {
 
 geometry_msgs::msg::Twist waypointCommand(
-  double x, double y,
+  double x, double y, double heading_x, double heading_y,
   double linear_gain, double angular_gain,
-  double maximum_linear_speed, double maximum_angular_speed,
-  double minimum_forward_x);
-
-double boundedRotationCommand(
-  double yaw_error, double gain,
-  double minimum_speed, double maximum_speed);
+  double maximum_linear_speed, double maximum_angular_speed);
 
 }  // namespace vint_nav2_plugins
 

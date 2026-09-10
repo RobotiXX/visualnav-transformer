@@ -9,26 +9,26 @@
 TEST(ControllerGeometry, ComputesBoundedForwardCommand)
 {
   const auto command = vint_nav2_plugins::waypointCommand(
-    1.0, 1.0, 1.0, 2.0, 0.5, 1.0, 0.01);
+    1.0, 1.0, 1.0, 0.0, 1.0, 2.0, 0.5, 1.0);
 
   EXPECT_DOUBLE_EQ(command.linear.x, 0.5);
   EXPECT_DOUBLE_EQ(command.angular.z, 1.0);
 }
 
-TEST(ControllerGeometry, RejectsBackwardWaypoint)
+TEST(ControllerGeometry, ClipsBackwardWaypointToZeroLinearVelocity)
 {
-  EXPECT_THROW(
-    vint_nav2_plugins::waypointCommand(
-      -0.1, 0.0, 1.0, 2.0, 0.5, 1.0, 0.01),
-    std::invalid_argument);
+  const auto command = vint_nav2_plugins::waypointCommand(
+    -0.1, 0.0, 1.0, 0.0, 1.0, 2.0, 0.5, 1.0);
+
+  EXPECT_DOUBLE_EQ(command.linear.x, 0.0);
+  EXPECT_DOUBLE_EQ(command.angular.z, 0.0);
 }
 
-TEST(ControllerGeometry, AppliesMinimumFinalRotationSpeed)
+TEST(ControllerGeometry, UsesPredictedHeadingOnlyAtZeroDisplacement)
 {
-  EXPECT_DOUBLE_EQ(
-    vint_nav2_plugins::boundedRotationCommand(0.01, 1.0, 0.1, 1.0),
-    0.1);
-  EXPECT_DOUBLE_EQ(
-    vint_nav2_plugins::boundedRotationCommand(-2.0, 1.0, 0.1, 1.0),
-    -1.0);
+  const auto command = vint_nav2_plugins::waypointCommand(
+    0.0, 0.0, 0.0, 1.0, 4.0, 4.0, 0.2, 0.4);
+
+  EXPECT_DOUBLE_EQ(command.linear.x, 0.0);
+  EXPECT_DOUBLE_EQ(command.angular.z, 0.4);
 }

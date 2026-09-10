@@ -60,7 +60,7 @@ def generate_test_description():
 
 
 class TestImageGoalControllerLifecycle(unittest.TestCase):
-    """Exercise FollowPath cancellation and stale-prediction outcomes."""
+    """Exercise FollowPath cancellation and waypoint-timeout outcomes."""
 
     @classmethod
     def setUpClass(cls):
@@ -170,11 +170,11 @@ class TestImageGoalControllerLifecycle(unittest.TestCase):
         )
 
     def test_cancel_and_stale_prediction_both_stop_motion(self):
-        """Verify grace, cancellation, and stale failure produce zero output."""
+        """Verify cancellation and the original timeout produce zero output."""
         first_start = len(self.commands)
         first_goal = self._send_goal(2.0)
 
-        # During initial inference grace, the plugin commands no motion.
+        # Before the first prediction, the plugin commands no motion.
         self._assert_zero_after(first_start)
         self._publish_until_moving(first_start)
 
@@ -194,11 +194,17 @@ class TestImageGoalControllerLifecycle(unittest.TestCase):
 
         stale_start = len(self.commands)
         stale_result = second_goal.get_result_async()
-        self._spin_until(stale_result.done, timeout_sec=4.0)
-        self.assertEqual(
-            stale_result.result().status, GoalStatus.STATUS_ABORTED
-        )
         self._assert_zero_after(stale_start)
+        for _ in range(10):
+            rclpy.spin_once(self.node, timeout_sec=0.05)
+        self.assertFalse(stale_result.done())
+
+        cancel_future = second_goal.cancel_goal_async()
+        self._spin_until(cancel_future.done)
+        self._spin_until(stale_result.done)
+        self.assertEqual(
+            stale_result.result().status, GoalStatus.STATUS_CANCELED
+        )
 
 
 @launch_testing.post_shutdown_test()

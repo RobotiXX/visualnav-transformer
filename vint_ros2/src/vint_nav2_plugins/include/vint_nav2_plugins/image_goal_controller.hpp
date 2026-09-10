@@ -11,7 +11,6 @@
 
 #include "nav2_core/controller.hpp"
 #include "nav2_costmap_2d/costmap_2d_ros.hpp"
-#include "nav2_costmap_2d/footprint_collision_checker.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
@@ -46,17 +45,11 @@ public:
 
 private:
   void predictionReceived(nav_msgs::msg::Path::SharedPtr path);
-  bool pathIsCollisionFree(
-    const nav_msgs::msg::Path & path,
-    const geometry_msgs::msg::PoseStamped & robot_pose) const;
 
   rclcpp_lifecycle::LifecycleNode::SharedPtr node_;
   std::string name_;
   std::string robot_frame_;
-  std::string costmap_frame_;
   std::atomic_bool active_{false};
-  std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros_;
-  nav2_costmap_2d::Costmap2D * costmap_{nullptr};
 
   rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>::SharedPtr
     global_plan_publisher_;
@@ -65,23 +58,16 @@ private:
   mutable std::mutex data_mutex_;
   nav_msgs::msg::Path global_plan_;
   nav_msgs::msg::Path prediction_;
-  rclcpp::Time plan_set_time_{0, 0, RCL_ROS_TIME};
 
   int waypoint_index_{2};
   int minimum_prediction_points_{2};
-  int collision_cost_threshold_{253};
-  double prediction_timeout_sec_{0.5};
-  double initial_prediction_grace_sec_{0.5};
+  double prediction_timeout_sec_{1.0};
   double maximum_path_start_error_m_{0.25};
-  double collision_check_step_m_{0.025};
-  double minimum_forward_x_m_{0.02};
-  double linear_gain_{1.0};
-  double angular_gain_{2.0};
-  double configured_maximum_linear_speed_{0.5};
-  double maximum_linear_speed_{0.5};
-  double maximum_angular_speed_{1.0};
-  double final_rotation_gain_{2.0};
-  double final_minimum_angular_speed_{0.1};
+  double linear_gain_{4.0};
+  double angular_gain_{4.0};
+  double configured_maximum_linear_speed_{0.2};
+  double maximum_linear_speed_{0.2};
+  double maximum_angular_speed_{0.4};
 };
 
 }  // namespace vint_nav2_plugins

@@ -5,7 +5,6 @@ from threading import Thread
 import time
 
 from geometry_msgs.msg import PoseStamped
-from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Path
 from PIL import Image as PilImage
 import rclpy
@@ -13,10 +12,55 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CompressedImage
-from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
 import yaml
 
 from vint_ros2.image_goal_inference import ImageGoalInferenceNode
+from vint_ros2.image_goal_inference import select_topomap_prediction
+from vint_ros2.model_backend import ModelPrediction
+from vint_ros2.model_backend import TrajectoryPoint
+
+
+def _prediction(distance, x):
+    return ModelPrediction(
+        distance=distance,
+        trajectory=(TrajectoryPoint(x=x, y=0.0),),
+    )
+
+
+def test_topomap_selection_matches_original_distance_and_advance_rule():
+    predictions = (
+        _prediction(5.0, 0.0),
+        _prediction(2.0, 1.0),
+        _prediction(4.0, 2.0),
+    )
+
+    selected, closest = select_topomap_prediction(
+        predictions,
+        start_index=7,
+        goal_index=12,
+        close_threshold=3.0,
+    )
+
+    assert selected is predictions[2]
+    assert closest == 9
+
+
+def test_topomap_selection_stays_on_distant_best_match():
+    predictions = (
+        _prediction(5.0, 0.0),
+        _prediction(4.0, 1.0),
+        _prediction(6.0, 2.0),
+    )
+
+    selected, closest = select_topomap_prediction(
+        predictions,
+        start_index=7,
+        goal_index=12,
+        close_threshold=3.0,
+    )
+
+    assert selected is predictions[1]
+    assert closest == 8
 
 
 def _write_route(tmp_path):
@@ -72,7 +116,6 @@ def test_registered_plan_produces_robot_frame_prediction(tmp_path):
         Parameter('global_plan_topic', value=plan_topic),
         Parameter('prediction_topic', value=prediction_topic),
         Parameter('inference_rate_hz', value=20.0),
-        Parameter('maximum_image_age_sec', value=2.0),
     ])
     client = rclpy.create_node(f'test_vint_image_goal_client_{suffix}')
     image_publisher = client.create_publisher(
@@ -83,13 +126,6 @@ def test_registered_plan_produces_robot_frame_prediction(tmp_path):
     subscription = client.create_subscription(
         Path, prediction_topic, predictions.append, 10
     )
-    broadcaster = StaticTransformBroadcaster(client)
-    transform = TransformStamped()
-    transform.header.frame_id = 'map'
-    transform.child_frame_id = 'base_link'
-    transform.transform.rotation.w = 1.0
-    broadcaster.sendTransform(transform)
-
     executor = MultiThreadedExecutor(num_threads=3)
     executor.add_node(inference)
     executor.add_node(client)
@@ -115,7 +151,8 @@ def test_registered_plan_produces_robot_frame_prediction(tmp_path):
             pose.pose.orientation.w = 1.0
             plan.poses.append(pose)
         plan_publisher.publish(plan)
-        image_publisher.publish(_compressed_image(stamp))
+        old_image_stamp = CompressedImage().header.stamp
+        image_publisher.publish(_compressed_image(old_image_stamp))
 
         deadline = time.monotonic() + 3.0
         while not predictions and time.monotonic() < deadline:
@@ -123,6 +160,7 @@ def test_registered_plan_produces_robot_frame_prediction(tmp_path):
 
         assert predictions
         assert predictions[-1].header.frame_id == 'base_link'
+        assert predictions[-1].header.stamp != old_image_stamp
         assert len(predictions[-1].poses) == 6
         assert predictions[-1].poses[0].pose.position.x == 0.0
     finally:

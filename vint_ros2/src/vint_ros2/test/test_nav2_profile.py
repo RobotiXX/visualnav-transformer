@@ -5,6 +5,7 @@ from copy import deepcopy
 import pytest
 
 from vint_ros2.nav2_profile import compose_nav2_profile
+from vint_ros2.nav2_profile import load_image_goal_controller
 from vint_ros2.nav2_profile import load_plugin_parameters
 from vint_ros2.nav2_profile import Nav2ProfileError
 from vint_ros2.nav2_profile import NavigationMode
@@ -54,6 +55,18 @@ def test_image_goal_replaces_only_stable_follow_path_id():
     assert output['planner_server']['ros__parameters']['GridBased'][
         'plugin'
     ] == 'nav2_theta_star_planner/ThetaStarPlanner'
+
+
+def test_image_goal_profile_keeps_original_pd_without_collision_gate():
+    controller = load_image_goal_controller()
+
+    assert controller['waypoint_index'] == 2
+    assert controller['prediction_timeout_sec'] == 1.0
+    assert controller['linear_gain'] == 4.0
+    assert controller['angular_gain'] == 4.0
+    assert 'collision_check_step_m' not in controller
+    assert 'collision_cost_threshold' not in controller
+    assert 'final_rotation_gain' not in controller
 
 
 def test_pointgoal_replaces_only_stable_gridbased_id():

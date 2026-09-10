@@ -1,6 +1,7 @@
 """Tests for mock inference and checkpoint compatibility contracts."""
 
 import sys
+from types import SimpleNamespace
 
 from PIL import Image
 import pytest
@@ -10,6 +11,7 @@ from vint_ros2.model_backend import checkpoint_model_type
 from vint_ros2.model_backend import load_trusted_checkpoint
 from vint_ros2.model_backend import MockInferenceBackend
 from vint_ros2.model_backend import ModelBackendError
+from vint_ros2.model_backend import TorchViNTBackend
 
 
 def _images(count: int):
@@ -36,6 +38,16 @@ def test_mock_backend_rejects_incomplete_history():
 
     with pytest.raises(ModelBackendError, match='Expected 3'):
         backend.predict_image_goal(_images(2), Image.new('RGB', (2, 2)))
+
+
+def test_mock_backend_preserves_one_prediction_per_topomap_candidate():
+    backend = MockInferenceBackend(context_size=2)
+    goals = _images(6)
+
+    predictions = backend.predict_image_goals(_images(3), goals)
+
+    assert len(predictions) == len(goals)
+    assert all(len(prediction.trajectory) == 5 for prediction in predictions)
 
 
 def test_pointgoal_checkpoint_requires_explicit_model_type_metadata():
@@ -77,3 +89,27 @@ def test_trusted_loader_shims_training_only_scheduler(monkeypatch, tmp_path):
     assert isinstance(result, model_backend._LegacyWarmupScheduler)
     assert 'warmup_scheduler' not in sys.modules
     assert 'warmup_scheduler.scheduler' not in sys.modules
+
+
+@pytest.mark.parametrize('mode', ('image_goal', 'point_goal'))
+def test_torch_backend_warms_the_selected_model_mode_before_use(mode):
+    backend = object.__new__(TorchViNTBackend)
+    backend.context_size = 2
+    backend._image_size = (8, 6)
+    backend._mode = mode
+    backend._device = SimpleNamespace(type='cpu')
+    calls = []
+    backend.predict_image_goal = lambda observations, goal: calls.append(
+        ('image_goal', len(observations), goal.size)
+    )
+    backend.predict_point_goal = lambda observations, goal: calls.append(
+        ('point_goal', len(observations), goal)
+    )
+
+    elapsed = backend._warm_up()
+
+    assert elapsed >= 0.0
+    if mode == 'image_goal':
+        assert calls == [('image_goal', 3, (8, 6))]
+    else:
+        assert calls == [('point_goal', 3, (1.0, 0.0))]

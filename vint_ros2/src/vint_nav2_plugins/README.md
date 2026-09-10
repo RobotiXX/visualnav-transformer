@@ -7,8 +7,9 @@ This ament C++ package provides two independent Nav2 plugins:
   prefix to a complete map-aware path tail.
 
 Both plugins use stamped ROS interfaces to separately managed Python inference
-nodes. Missing, stale, mismatched, backward, or colliding inference results fail
-closed.
+nodes. The paused PointGoal planner retains its experimental map-aware prefix
+validation. The image-goal controller instead reproduces the original released
+deployment behavior and deliberately performs no costmap collision check.
 
 ## PointGoal global planner
 
@@ -39,11 +40,10 @@ default and accepts `--pointgoal-planner-config` for a copied, tuned version.
 
 `vint_nav2_plugins/ImageGoalController` implements `nav2_core::Controller`.
 Each Nav2 global plan is published to the registered-route inference node. The
-plugin accepts only recent `base_link` predictions that start at the robot,
-checks the padded footprint along the prediction against the local costmap, and
-converts a configurable predicted point into bounded forward velocity. It does
-not allow reverse motion. Within the active goal checker's XY tolerance, the
-plugin rotates toward the final Nav2 goal orientation.
+plugin checks the stamped `base_link` message contract and converts the selected
+predicted point with the equations from the original ROS 1 `pd_controller.py`.
+It does not inspect the local costmap, reject a valid model rollout based on
+obstacles, or add a final goal-yaw rotation.
 
 Copy `config/image_goal_controller.yaml` into the active controller-server
 configuration. `waypoint_index` counts predicted model points and does not count
@@ -53,46 +53,36 @@ The profile composer reads this installed file by default and accepts
 
 The controller applies
 `v = linear_gain * waypoint_x` and
-`w = angular_gain * atan2(waypoint_y, waypoint_x)`, then clamps both commands.
-It is forward-only. Nav2's active goal checker determines completion; once the
-robot is inside that checker's XY tolerance, the controller rotates toward the
-final plan yaw.
-
-The collision gate first transforms the stamped robot-relative prediction into
-the local-costmap frame at the current robot pose. It samples every path segment
-at `collision_check_step_m`; every sample must have an acceptable center-cell
-cost and an acceptable complete padded-footprint cost. This gate catches
-obstacles between model outputs but only reflects what the current local
-costmap can represent. It is not a substitute for hardware collision or
-emergency-stop systems.
+`w = angular_gain * atan(waypoint_y / waypoint_x)`, then clamps both commands.
+With the original `4 Hz` model convention, both gains are `4`. Linear velocity
+is clamped to `[0, 0.2] m/s`, and yaw rate is clamped to
+`[-0.4, 0.4] rad/s`. When both waypoint coordinates are nearly zero, the model's
+predicted heading supplies the angular command. A negative X value is not an
+adapter error; the original forward clamp turns it into zero linear velocity.
 
 The YAML file documents every parameter in place. The most important groups
 are:
 
-- `prediction_timeout_sec` and `initial_prediction_grace_sec`: freshness and
-  startup failure behavior;
+- `prediction_timeout_sec`: the original one-second waypoint expiry, expressed
+  as an explicit zero command for Nav2;
 - `maximum_path_start_error_m`: the robot-frame origin contract;
-- `collision_check_step_m` and `collision_cost_threshold`: continuous local
-  costmap validation;
-- `waypoint_index` and `minimum_forward_x_m`: model target selection and
-  forward-only enforcement;
-- control gains and maximum speeds: bounded conversion from a predicted point
-  to velocity; and
-- final-rotation parameters: goal-yaw control after Nav2 accepts XY.
+- `waypoint_index`: original model target selection; and
+- control gains and maximum speeds: the original PD conversion and clamps.
 
 Unlike the original ROS 1 ViNT deployment, this plugin participates in Nav2
-lifecycle, cancellation, goal checking, speed-limit, costmap, and terminal-zero
+lifecycle, cancellation, goal checking, speed-limit, and terminal-zero
 semantics. The Python inference node publishes the predicted path, the C++
 plugin returns a velocity command, and Nav2's controller server publishes that
-command on `/cmd_vel`. The RWD global planner and registered metric visual route
-replace the original unregistered topomap neighborhood search.
+command on `/cmd_vel`. The registered metric route selects the task-compatible
+direction, while the inference node retains the original distance-based local
+topomap neighborhood search.
 
 ## Current validation boundary
 
 The plugins compile and their geometry/command tests pass on ROS 2 Humble. A
 mock PointGoal inference service is tested through ROS middleware. The
 image-goal controller-server launch test covers activation, live commands,
-cancellation, stale-prediction abort, and zero commands after both terminal
-paths. The released image-goal checkpoint loads and runs through the Python
+cancellation, one-second prediction expiry, and zero commands after both
+stopping paths. The released image-goal checkpoint loads and runs through the Python
 backend on the development GPU. Closed-loop trained-model navigation and robot
 motion remain unchecked and are tracked in the workspace README.

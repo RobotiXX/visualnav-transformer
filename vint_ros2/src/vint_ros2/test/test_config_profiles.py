@@ -26,6 +26,13 @@ def test_robot_profiles_use_adapter_owned_camera_topics():
     assert collection['image_topic'] == '/camera/image/compressed'
     assert '/camera/camera_info' in collection['topics']
     assert image_goal['image_topic'] == '/camera/image/compressed'
+    assert image_goal['inference_rate_hz'] == 4.0
+    assert image_goal['topomap_radius'] == 4
+    assert image_goal['close_threshold'] == 3.0
+    assert 'lookahead_distance_m' not in image_goal
+    assert 'route_corridor_tolerance_m' not in image_goal
+    assert 'maximum_image_age_sec' not in image_goal
+    assert 'maximum_plan_age_sec' not in image_goal
     assert pointgoal['image_topic'] == '/camera/image/compressed'
 
 
