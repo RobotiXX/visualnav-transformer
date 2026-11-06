@@ -29,9 +29,13 @@ controller_server:
       # Reproduce deployment/src/pd_controller.py with DT = 1 / 4 Hz:
       #   v = waypoint_x / DT
       #   w = atan(waypoint_y / waypoint_x) / DT
-      # followed by the original forward-only clamps. At near-zero x/y, the
-      # predicted heading vector supplies angular velocity.
+      # followed by forward-only clamps. ViNT's paper specifies robot-specific
+      # waypoint unnormalization based on top speed. The paired release-model
+      # profile scales normalized points by 0.8 m/s / 4 Hz = 0.20 m, while this
+      # controller caps the resulting command at the same 0.8 m/s study speed.
+      # For a 1.0 m/s study, change both values to 0.25 m and 1.0 m/s. At
+      # near-zero x/y, the predicted heading vector supplies angular velocity.
       linear_gain: 4.0
       angular_gain: 4.0
-      maximum_linear_speed: 0.2
+      maximum_linear_speed: 0.8
       maximum_angular_speed: 0.4

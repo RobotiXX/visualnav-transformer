@@ -35,7 +35,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--image-goal-params', type=Path)
     parser.add_argument('--pointgoal-params', type=Path)
-    parser.add_argument('--route-manifest', type=Path)
+    parser.add_argument('--route-directory', type=Path)
     parser.add_argument(
         '--image-goal-controller-config',
         type=Path,
@@ -62,7 +62,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         arguments.mode,
         image_goal_params=arguments.image_goal_params,
         pointgoal_params=arguments.pointgoal_params,
-        route_manifest=arguments.route_manifest,
+        route_directory=arguments.route_directory,
         image_goal_controller_config=arguments.image_goal_controller_config,
         pointgoal_planner_config=arguments.pointgoal_planner_config,
     )

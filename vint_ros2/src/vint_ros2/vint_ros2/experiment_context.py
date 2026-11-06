@@ -10,6 +10,7 @@ from typing import Any, Mapping
 import yaml
 
 from vint_ros2.nav2_profile import NavigationMode
+from vint_ros2.route_manifest import load_route_directory
 from vint_ros2.route_manifest import load_route_manifest
 
 
@@ -71,6 +72,17 @@ def describe_route(path: str | Path) -> dict[str, Any]:
     return descriptor
 
 
+def describe_route_directory(path: str | Path) -> dict[str, Any]:
+    """Describe and content-hash every deployable route in a directory."""
+    directory = Path(path).expanduser().resolve()
+    routes = load_route_directory(directory)
+    return {
+        'path': str(directory),
+        'route_count': len(routes),
+        'routes': [describe_route(route.manifest_path) for route in routes],
+    }
+
+
 def _load_ros_parameters(path: str | Path, node_name: str) -> tuple[Path, dict]:
     resolved = Path(path).expanduser().resolve()
     try:
@@ -91,7 +103,7 @@ def _inference_component(
     path: str | Path,
     *,
     node_name: str,
-    route_manifest: str | Path | None = None,
+    route_directory: str | Path | None = None,
 ) -> dict[str, Any]:
     resolved, parameters = _load_ros_parameters(path, node_name)
     backend = str(parameters.get('backend', '')).strip()
@@ -121,8 +133,8 @@ def _inference_component(
         component['model_config'] = describe_file(
             model_config, label='Model configuration'
         )
-    if route_manifest is not None:
-        component['route_manifest'] = describe_route(route_manifest)
+    if route_directory is not None:
+        component['route_directory'] = describe_route_directory(route_directory)
     return component
 
 
@@ -131,7 +143,7 @@ def build_experiment_context(
     *,
     image_goal_params: str | Path | None = None,
     pointgoal_params: str | Path | None = None,
-    route_manifest: str | Path | None = None,
+    route_directory: str | Path | None = None,
     image_goal_controller_config: str | Path | None = None,
     pointgoal_planner_config: str | Path | None = None,
 ) -> dict[str, Any]:
@@ -156,14 +168,15 @@ def build_experiment_context(
         NavigationMode.IMAGE_GOAL_LOCAL,
         NavigationMode.VINT_FULL,
     }:
-        if image_goal_params is None or route_manifest is None:
+        if image_goal_params is None or route_directory is None:
             raise ExperimentContextError(
-                'Image-goal profiles require image-goal parameters and a route manifest.'
+                'Image-goal profiles require image-goal parameters and a '
+                'route directory.'
             )
         context['inference']['image_goal'] = _inference_component(
             image_goal_params,
             node_name='vint_image_goal_inference',
-            route_manifest=route_manifest,
+            route_directory=route_directory,
         )
         if image_goal_controller_config is None:
             raise ExperimentContextError(

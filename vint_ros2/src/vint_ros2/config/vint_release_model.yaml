@@ -16,9 +16,10 @@ learn_angle: true
 image_size: [85, 64]
 normalize: true
 
-# The official ROS 1 deployment converts normalized action coordinates with
-# max_v / frame_rate = 0.2 m/s / 4 Hz = 0.05 m. This multiplies every predicted
-# x/y coordinate; it is neither a fixed distance between consecutive outputs
-# nor a controller speed limit. Re-estimate it only when fine-tuning on robot
-# data, not merely because the online inference rate changes.
-metric_waypoint_spacing_m: 0.05
+# ViNT predicts embodiment-normalized waypoints. The paper calls for a
+# robot-specific controller to unnormalize them according to the target robot's
+# top speed, and the released deployment implements that scale as max_v / rate.
+# The ScoutMini study uses 0.8 m/s / 4 Hz = 0.20 m. For a later 1.0 m/s study,
+# change this value to 0.25 m together with the controller's
+# maximum_linear_speed; do not change only one side of that contract.
+metric_waypoint_spacing_m: 0.20

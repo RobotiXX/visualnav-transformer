@@ -21,8 +21,8 @@ def generate_launch_description():
             ),
         ),
         DeclareLaunchArgument(
-            'route_manifest',
-            description='Recorded directional route.yaml file.',
+            'route_directory',
+            description='Directory of converted directional routes.',
         ),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         Node(
@@ -32,7 +32,7 @@ def generate_launch_description():
             parameters=[
                 LaunchConfiguration('params_file'),
                 {
-                    'route_manifest': LaunchConfiguration('route_manifest'),
+                    'route_directory': LaunchConfiguration('route_directory'),
                     'use_sim_time': ParameterValue(
                         LaunchConfiguration('use_sim_time'),
                         value_type=bool,

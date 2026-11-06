@@ -15,11 +15,18 @@ from launch_ros.actions import Node
 import yaml
 
 
+def _resolve_output_directory(value):
+    """Expand a user-relative rosbag output directory."""
+    return str(Path(value).expanduser())
+
+
 def _launch_collection(context):
     profile_path = Path(
         LaunchConfiguration('profile').perform(context)
     ).expanduser().resolve()
-    output = LaunchConfiguration('output').perform(context)
+    output = _resolve_output_directory(
+        LaunchConfiguration('output').perform(context)
+    )
     use_sim_time = LaunchConfiguration('use_sim_time').perform(context)
     with profile_path.open('r', encoding='utf-8') as stream:
         profile = yaml.safe_load(stream)
@@ -82,8 +89,10 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'output',
-            default_value='vint_route_bag',
-            description='New rosbag2 output directory.',
+            default_value='~/ssd/vint_bags/vint_route_bag',
+            description=(
+                'New rosbag2 output directory; a leading ~ is expanded.'
+            ),
         ),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         OpaqueFunction(function=_launch_collection),

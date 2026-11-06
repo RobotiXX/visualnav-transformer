@@ -1,18 +1,23 @@
 image_topic: /camera/image/compressed
 image_type: compressed
+# map_pose_sampler publishes map -> base_link here at every retained image
+# timestamp. Its two-thread executor continues receiving TF while lookup waits.
 pose_topic: /vint/map_pose
 fixed_frame: map
 robot_frame: base_link
-transform_timeout_sec: 0.1
+# Allow the 10 Hz lidar odometry and AMCL transform to arrive after a 15 Hz
+# camera frame without accepting an untimestamped latest transform.
+transform_timeout_sec: 0.5
 warning_throttle_sec: 2.0
 storage_id: mcap
 max_cache_size: 104857600
 topics:
   - /camera/camera_info
-  - /cmd_vel
   - /map_name
   - /plan
-  - /rko_lio/odom
+  # The handheld remote bypasses ROS command topics. Odometry records measured
+  # linear and angular velocity as well as motion for route reconstruction.
+  - /odom
   - /scan
   - /task_status
   - /tf

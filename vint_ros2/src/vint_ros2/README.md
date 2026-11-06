@@ -21,12 +21,24 @@ The collector launches a camera-triggered TF sampler and an MCAP recorder. The
 default ScoutMini profile records the adapter-owned `/camera/image/compressed`
 stream, exact
 `map -> base_link` samples on `/vint/map_pose`, odometry, TF, scan, velocity,
-global plan, map name, and task status. Its cache is 100 MiB.
+global plan, map name, and task status. Velocity is measured from the odometry
+message because the handheld remote does not publish ROS velocity commands. Its
+cache is 100 MiB.
 
 ```bash
+mkdir -p ~/ssd/vint_bags
 ros2 launch vint_ros2 collect_route.launch.py \
-  output:=bags/fuse_3312_to_lab_front
+  output:=~/ssd/vint_bags/fuse_3312_to_lab_front_01
 ```
+
+The launch file expands a leading `~`; choose a new run suffix because rosbag2
+will not overwrite an existing output directory. Drive with the normal robot
+controller in a separate terminal or byobu window. Route collection does not
+require keyboard teleoperation or routing manual commands through Nav2's
+velocity smoother. The hardware profile records measured velocity from
+`/odom`; synchronized image and map-pose samples provide the trajectory
+from which ViNT training actions are derived. Stop only the collection launch
+with `Ctrl-C` after the robot is stationary and the route is complete.
 
 Copy and edit `config/scoutmini_route_collection.yaml` to change robot topics
 or frames, then pass the copy as `profile:=/absolute/path/profile.yaml`.
@@ -41,7 +53,7 @@ default, rejects image/pose pairs outside the synchronization tolerance, and
 refuses to overwrite an existing trajectory.
 
 ```bash
-ros2 run vint_ros2 convert_bag bags/fuse_3312_to_lab_front \
+ros2 run vint_ros2 convert_bag ~/ssd/vint_bags/fuse_3312_to_lab_front_01 \
   --output-root datasets/scoutmini \
   --trajectory-name fuse_3312_to_lab_front_run_01 \
   --image-topic /camera/image/compressed \
@@ -54,6 +66,15 @@ ros2 run vint_ros2 convert_bag bags/fuse_3312_to_lab_front \
 The output directory contains numbered JPEGs and `traj_data.pkl` in the
 original ViNT training format, plus a validated `route.yaml` used by the ROS 2
 image-goal selector. Record each travel direction separately.
+
+For deployment, collect the chosen converted trajectories below one directory,
+for example `~/ssd/vint_routes/deployment`. The image-goal node recursively
+loads every `route.yaml` below that directory and allows one deployment route
+for each map/source/destination waypoint-ID tuple. `/map_name` selects the map;
+the start and end of each Nav2 global plan select the directional route. The
+default endpoint tolerances are 2 m, and ambiguous or unmatched plans produce
+no controller prediction. `/vint/image_goal/selected_route` publishes the
+active `route_id`, or an empty string when no route is selected.
 
 Create reproducible, trajectory-level splits after collecting at least two
 runs:

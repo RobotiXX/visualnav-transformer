@@ -124,14 +124,21 @@ adapter to the interfaces required by Nav2. The comparison below uses
 | Node advance | Use the following image when minimum distance is at most `3` | Same threshold and advance rule |
 | Inference rate | `4 Hz` | `4 Hz` |
 | Control rate | PD node runs at `9 Hz` and holds the latest waypoint | Nav2 controller runs at the common `10 Hz` study rate and holds the latest prediction |
-| Metric conversion | Multiply normalized X/Y by `0.2 / 4 = 0.05 m` | Same `0.05 m` scale |
+| Metric conversion | Example robot uses `0.2 / 4 = 0.05 m` per normalized unit | ScoutMini study uses `0.8 / 4 = 0.20 m` per normalized unit |
 | Control target | Predicted waypoint index `2` (the third of five points) | Same waypoint index |
 | PD conversion | `v=x/DT`; `w=atan(y/x)/DT`; predicted heading only when X/Y are nearly zero | Same equations with `DT=0.25 s` |
-| Command limits | Forward velocity `[0, 0.2] m/s`; yaw rate `[-0.4, 0.4] rad/s` | Same limits before any common platform-level limiting |
+| Command limits | Example robot uses `[0, 0.2] m/s`; yaw rate `[-0.4, 0.4] rad/s` | ScoutMini study uses `[0, 0.8] m/s`; yaw rate remains `[-0.4, 0.4] rad/s` before common platform-level limiting |
 | Lost waypoint | PD input expires after one second and no new motion is published | A missing or one-second-old prediction returns zero velocity without aborting the Nav2 goal |
 | Camera stops after context is full | Inference continues from the retained context | Same behavior; the inference-time prediction stamp does not add a camera-age gate |
 | Collision checking | None in `navigate.py` or `pd_controller.py` | None in `ImageGoalController`; the local costmap does not veto ViNT output |
 | Final orientation | No separate goal-yaw rotation | No adapter-added final rotation; the study goal checker accepts any yaw |
+
+The speed and metric-scale values differ by robot rather than by algorithm.
+The ViNT paper defines embodiment-normalized relative waypoints and delegates
+unnormalization to a robot-specific controller using the target robot's top
+speed. The released repository implements this contract as `max_v / frame_rate`.
+The ScoutMini study therefore pairs a 0.8 m/s operating limit with a 0.20 m
+scale at 4 Hz while retaining the original third-point target.
 
 Six integration differences remain. First, route images are stored in a
 metric manifest so the task can select the correct A-to-B route; the map poses
@@ -227,10 +234,11 @@ All topic names are parameters. The initial ScoutMini profile will use:
 
 - a forward-facing `sensor_msgs/msg/Image` or
   `sensor_msgs/msg/CompressedImage` camera topic;
-- `/rko_lio/odom` as `nav_msgs/msg/Odometry` for trajectory training data;
+- `/odom` as `nav_msgs/msg/Odometry` for measured linear and angular
+  velocity and motion diagnostics;
 - `/tf` and `/tf_static` for map registration;
 - a sampled `geometry_msgs/msg/PoseStamped` map pose produced at camera time;
-- `/cmd_vel`, `/plan`, and task status for debugging and experiment audit.
+- `/plan` and task status for debugging and experiment audit.
 
 The converter aligns every retained image with a pose at the same timestamp and
 rejects samples outside a configurable synchronization tolerance. It produces
@@ -262,8 +270,15 @@ nodes:
     pose: {x: 0.0, y: 0.0, yaw: 0.0}
 ```
 
-Full waypoint IDs are metadata and are never inferred from filenames. Route
-selection must match the active map and direction.
+Full waypoint IDs are metadata and are never inferred from filenames. For
+deployment, place each selected converted trajectory below one route directory;
+the runtime recursively loads its `route.yaml` files. It permits one route per
+map, source waypoint ID, and destination waypoint ID tuple, then selects a route
+from `/map_name` and the Nav2 global plan's start and destination positions.
+The default source and destination tolerances are both 2 m. Ambiguous endpoint
+matches and plans without a registered directional route fail closed.
+The latched `/vint/image_goal/selected_route` topic reports the active
+`route_id` and publishes an empty string when no route is selected.
 
 ## Environment strategy
 
@@ -360,19 +375,20 @@ release or a trusted local training run.
 
 Start the normal robot or simulation stack without submitting a task. Drive
 the exact A-to-B route manually and record the forward camera, a camera-time
-map pose, TF, odometry, commands, plans, and task diagnostics:
+map pose, TF, odometry, plans, and task diagnostics:
 
 ```bash
 # Robot: standard topics supplied by scoutmini_rwd_adapter
+mkdir -p ~/ssd/vint_bags
 ros2 launch vint_ros2 collect_route.launch.py \
   profile:=$(ros2 pkg prefix --share vint_ros2)/config/scoutmini_route_collection.yaml \
-  output:=bags/fuse_3312_to_lab_front_01
+  output:=~/ssd/vint_bags/fuse_3312_to_lab_front_01
 
 # Simulation: raw Gazebo camera and simulated clock
 ros2 launch vint_ros2 collect_route.launch.py \
   profile:=$(ros2 pkg prefix --share vint_ros2)/config/simulation_route_collection.yaml \
   use_sim_time:=true \
-  output:=bags/fuse_3312_to_lab_front_sim_01
+  output:=~/ssd/vint_bags/fuse_3312_to_lab_front_sim_01
 ```
 
 Stop the launch with `Ctrl-C` after the traversal. The recorder uses MCAP with
@@ -381,6 +397,15 @@ reversing image order. Collect multiple runs per direction because dataset
 splits assign complete trajectories, and at least two trajectories are
 required for separate training and test sets.
 
+Run the normal handheld robot controller separately while collecting. Keyboard
+teleoperation and the Nav2 velocity smoother are not collection requirements.
+The selected remote bypasses ROS velocity commands, so the hardware profile
+does not wait for or record `/cmd_vel`; `/odom` retains measured linear
+and angular velocity instead. The converter follows the original ViNT data
+contract and derives normalized actions from synchronized map-pose differences,
+not commanded velocity. Stop the collector terminal with `Ctrl-C` only after
+the robot is stationary.
+
 ### 2. Convert and validate the route
 
 The converter samples camera frames at 4 Hz, synchronizes each retained frame
@@ -388,7 +413,7 @@ to `/vint/map_pose`, and atomically writes both the original ViNT training
 layout and `route.yaml` with map-frame registration:
 
 ```bash
-ros2 run vint_ros2 convert_bag bags/fuse_3312_to_lab_front_01 \
+ros2 run vint_ros2 convert_bag ~/ssd/vint_bags/fuse_3312_to_lab_front_01 \
   --output-root datasets/scoutmini \
   --trajectory-name fuse_3312_to_lab_front_01 \
   --image-topic /camera/image/compressed \
@@ -433,9 +458,13 @@ cd train
 python train.py -c ../vint_ros2/src/vint_ros2/config/scoutmini_vint_finetune.yaml
 ```
 
-Each run writes `latest.pth` and epoch checkpoints below
-`train/logs/rwd-vint/<timestamped-run>/`. Keep each checkpoint paired with the
-exact YAML used to construct it. Fine-tuning is optional for the first
+The ScoutMini profile initializes from the released `checkpoints/vint.pth`
+weights with a fresh optimizer. Each run writes `latest.pth` after every epoch,
+an `epoch_NNN.pth` checkpoint every five completed epochs, and `best.pth`
+whenever mean validation loss improves. It also updates `validation_loss.csv`
+and `validation_loss.png` below the configured
+`<log_root>/rwd-vint/<timestamped-run>/`. Keep each checkpoint paired with the
+copied `training_config.yaml` used to construct it. Fine-tuning is optional for the first
 image-goal experiment: start with the released checkpoint and a registered
 route, then collect site data if its held-out behavior is inadequate.
 
@@ -506,7 +535,7 @@ The inference nodes can be exercised independently:
 ```bash
 ros2 launch vint_ros2 image_goal_inference.launch.py \
   params_file:=/absolute/path/to/image_goal_experiment.yaml \
-  route_manifest:=/absolute/path/to/route.yaml
+  route_directory:=/absolute/path/to/deployment_routes
 
 ros2 launch vint_ros2 pointgoal_inference.launch.py \
   params_file:=/absolute/path/to/pointgoal_experiment.yaml
@@ -542,11 +571,17 @@ host/device transfer, batched local-topomap inference, and ROS publication.
 Also monitor missed cycles, thermal throttling, camera timestamp age, and GPU
 memory during a route-length run.
 
-Keep the released model's `0.05 m` output scale because it comes from the
-checkpoint's training and original `max_v / frame_rate` normalization. Initial
-supervised trials retain the original 0.2 m/s linear and 0.4 rad/s angular
-limits. If batched inference cannot sustain 4 Hz on the robot, report the
-measured rate as a deviation rather than changing the model scale or PD gains.
+The paper and released deployment make the metric conversion robot-specific:
+ViNT normalizes relative waypoints across embodiments, and deployment multiplies
+them by `max_v / frame_rate`. The ScoutMini study sets the operating maximum to
+0.8 m/s, uses a paired 0.20 m scale at 4 Hz, and retains waypoint index 2, the
+third predicted point. The larger scale already increases both the physical
+feedback distance and attainable command by four relative to the example 0.2
+m/s robot; selecting a farther point at the same time would add a second change
+and can reduce corner responsiveness. A later 1.0 m/s trial must change the
+scale and clamp together to 0.25 m and 1.0 m/s. If batched inference cannot
+sustain 4 Hz on the robot, report the measured rate as a deviation rather than
+changing the scale to compensate for runtime jitter.
 
 ### 6. Compose controlled Nav2 profiles
 
@@ -584,7 +619,7 @@ the dashboard to submit the task after the stack is ready:
 
 ```bash
 VINT_MODE=image_goal_local \
-VINT_ROUTE_MANIFEST=/absolute/path/to/route.yaml \
+VINT_ROUTE_DIRECTORY=/absolute/path/to/deployment_routes \
 ./scripts/sim_byobu
 
 VINT_MODE=pointgoal_global ./scripts/sim_byobu
@@ -607,7 +642,7 @@ For each explicit `VINT_MODE`, including `classical`, `sim_byobu` creates an
 `experiment_context.json` beside the composed Nav2 YAML. The context records
 the selected global planner and local controller plus absolute paths, sizes,
 and SHA-256 digests for the effective model checkpoint, model YAML, inference
-YAML, route manifest plus its referenced images, and plugin YAML. It is loaded
+YAML, every route manifest plus its referenced images, and plugin YAML. It is loaded
 once by both the task executor and bag recorder and copied into their
 task-associated metadata. A
 Torch profile with an empty or missing checkpoint fails before simulation
@@ -625,21 +660,24 @@ ros2 run vint_ros2 write_experiment_context \
 The ScoutMini hardware wrapper exposes image-goal ViNT as one of three
 mutually exclusive study conditions. Source the RWD, ScoutMini, and ViNT
 workspaces in that order, then provide a copied inference YAML configured with
-`backend: torch` and a directional route registered to the trial path:
+`backend: torch` and a directory of directional routes registered to the task
+paths:
 
 ```bash
 NAVIGATION_MODE=vint \
 VINT_IMAGE_GOAL_PARAMS_FILE=/absolute/path/to/frozen_torch_profile.yaml \
-VINT_ROUTE_MANIFEST=/absolute/path/to/frozen_route.yaml \
+VINT_ROUTE_DIRECTORY=/absolute/path/to/deployment_routes \
 ./scripts/nav2_byobu
 ```
 
 The wrapper selects the complete frozen `nav2_vint.yaml` hardware profile and
 starts `image_goal_inference.launch.py` in its own Byobu tab. It refuses mock
 inference, missing model resources, and invalid route data before creating the
-hardware session. The shared experiment context hashes the Nav2 snapshot,
-inference configuration, model checkpoint, controller configuration, route
-manifest, and route images for the task and bag metadata. Use
+hardware session. The wrapper also adds `visualnav-transformer/train` to the
+ViNT pane's Python module path so the inference backend can construct the
+original model classes used by the checkpoint. The shared experiment context
+hashes the Nav2 snapshot, inference configuration, model checkpoint, controller
+configuration, route manifests, and route images for the task and bag metadata. Use
 `CHECK_ONLY=true` with the same arguments to validate all files without
 launching drivers or navigation.
 

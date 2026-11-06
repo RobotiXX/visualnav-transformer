@@ -8,14 +8,18 @@ vint_image_goal_inference:
     checkpoint_path: ""
     model_config_path: ""
     device: cuda
-    route_manifest: ""
+    route_directory: ""
     image_topic: /camera/image
     image_type: raw
+    map_name_topic: /map_name
     global_plan_topic: /vint/image_goal/global_plan
     prediction_topic: /vint/image_goal/predicted_path
+    selected_route_topic: /vint/image_goal/selected_route
     robot_frame: base_link
     inference_rate_hz: 4.0
     topomap_radius: 4
     close_threshold: 3.0
-    route_destination_tolerance_m: 1.0
+    route_source_tolerance_m: 3.0
+    route_destination_tolerance_m: 3.0
+    route_selection_ambiguity_m: 0.25
     warning_throttle_sec: 2.0

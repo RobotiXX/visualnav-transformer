@@ -1,6 +1,7 @@
 # defaults for training
 project_name: vint
 run_name: vint
+log_root: logs
 
 # training setup
 use_wandb: True # set to false if you don't want to log to wandb
@@ -63,4 +64,7 @@ pairwise_test_freq: 10 # in epochs
 eval_fraction: 0.25 # fraction of the dataset to use for evaluation
 wandb_log_freq: 10 # in iterations
 eval_freq: 1 # in epochs
-
+checkpoint_frequency: 1 # save a numbered checkpoint every N completed epochs
+save_best_checkpoint: false
+validation_history_filename: validation_loss.csv
+validation_plot_filename: validation_loss.png

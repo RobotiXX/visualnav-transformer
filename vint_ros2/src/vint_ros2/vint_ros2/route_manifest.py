@@ -213,3 +213,52 @@ def load_route_manifest(
         nodes=tuple(nodes),
         manifest_path=path,
     )
+
+
+def load_route_directory(
+    route_directory: str | Path,
+    *,
+    require_images: bool = True,
+) -> tuple[RouteManifest, ...]:
+    """Load one deployable route per semantic direction from a directory."""
+    directory = Path(route_directory).expanduser().resolve()
+    if not directory.is_dir():
+        raise RouteManifestError(
+            f'Route directory does not exist: {directory}'
+        )
+    manifest_paths = sorted(directory.rglob('route.yaml'))
+    if not manifest_paths:
+        raise RouteManifestError(
+            f'Route directory contains no route.yaml files: {directory}'
+        )
+
+    routes = tuple(
+        load_route_manifest(path, require_images=require_images)
+        for path in manifest_paths
+    )
+    route_ids: dict[str, Path] = {}
+    directions: dict[tuple[str, str, str], Path] = {}
+    for route in routes:
+        previous_id = route_ids.get(route.route_id)
+        if previous_id is not None:
+            raise RouteManifestError(
+                f"Duplicate route_id '{route.route_id}' in {previous_id} "
+                f'and {route.manifest_path}.'
+            )
+        route_ids[route.route_id] = route.manifest_path
+
+        direction = (
+            route.map_id,
+            route.source_waypoint_id,
+            route.destination_waypoint_id,
+        )
+        previous_direction = directions.get(direction)
+        if previous_direction is not None:
+            raise RouteManifestError(
+                'Route directory contains more than one deployment route for '
+                f'{route.source_waypoint_id} -> '
+                f'{route.destination_waypoint_id} on {route.map_id}: '
+                f'{previous_direction} and {route.manifest_path}.'
+            )
+        directions[direction] = route.manifest_path
+    return routes

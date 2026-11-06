@@ -6,6 +6,7 @@ train: true
 batch_size: 128
 eval_batch_size: 128
 epochs: 50
+initial_checkpoint_path: ../checkpoints/vint.pth
 gpu_ids: [0]
 num_workers: 8
 lr: 0.0001
@@ -39,7 +40,7 @@ len_traj_pred: 5
 learn_angle: true
 image_size: [85, 64]
 goal_type: image
-metric_waypoint_spacing_m: 0.25
+metric_waypoint_spacing_m: 0.226
 
 # These paths are relative to the train directory used by train/train.py.
 datasets:
@@ -58,3 +59,7 @@ pairwise_test_freq: 0
 eval_fraction: 0.25
 wandb_log_freq: 10
 eval_freq: 1
+checkpoint_frequency: 5
+save_best_checkpoint: true
+validation_history_filename: validation_loss.csv
+validation_plot_filename: validation_loss.png

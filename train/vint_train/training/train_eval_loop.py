@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import wandb
 import os
 import numpy as np
@@ -6,6 +8,11 @@ from prettytable import PrettyTable
 
 from vint_train.training.train_utils import train, evaluate
 from vint_train.training.train_utils import train_nomad, evaluate_nomad
+from vint_train.training.training_artifacts import checkpoint_filename
+from vint_train.training.training_artifacts import is_best_validation_loss
+from vint_train.training.training_artifacts import should_save_numbered_checkpoint
+from vint_train.training.training_artifacts import ValidationPoint
+from vint_train.training.training_artifacts import write_validation_artifacts
 
 import torch
 import torch.nn as nn
@@ -13,9 +20,6 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.optim import Adam
 from torchvision import transforms
-
-from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-from diffusers.training_utils import EMAModel
 
 def train_eval_loop(
     train_model: bool,
@@ -40,6 +44,10 @@ def train_eval_loop(
     eval_fraction: float = 0.25,
     goal_type: str = "image",
     model_type: str = "vint",
+    checkpoint_frequency: int = 1,
+    save_best_checkpoint: bool = False,
+    validation_history_filename: str = "validation_loss.csv",
+    validation_plot_filename: str = "validation_loss.png",
 ):
     """
     Train and evaluate the model for several epochs (vint or gnm models)
@@ -67,7 +75,12 @@ def train_eval_loop(
         eval_fraction: fraction of training data to use for evaluation
     """
     assert 0 <= alpha <= 1
+    if checkpoint_frequency <= 0:
+        raise ValueError("checkpoint_frequency must be positive")
     latest_path = os.path.join(project_folder, f"latest.pth")
+    best_path = os.path.join(project_folder, "best.pth")
+    best_validation_loss = None
+    validation_history = []
 
     for epoch in range(current_epoch, current_epoch + epochs):
         if train_model:
@@ -124,13 +137,21 @@ def train_eval_loop(
             if isinstance(model, nn.DataParallel)
             else model.state_dict()
         )
+        validation_loss = float(np.mean(avg_total_test_loss))
+        improved = is_best_validation_loss(
+            validation_loss, best_validation_loss
+        )
+        if improved:
+            best_validation_loss = validation_loss
         checkpoint = {
             "format_version": 1,
             "model_type": model_type,
             "epoch": epoch,
+            "completed_epochs": epoch + 1,
             "state_dict": state_dict,
             "optimizer": optimizer.state_dict(),
-            "avg_total_test_loss": np.mean(avg_total_test_loss),
+            "avg_total_test_loss": validation_loss,
+            "best_validation_loss": best_validation_loss,
             "scheduler": scheduler.state_dict() if scheduler is not None else None
         }
         # log average eval loss
@@ -140,18 +161,36 @@ def train_eval_loop(
         if scheduler is not None:
             # scheduler calls based on the type of scheduler
             if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                scheduler.step(np.mean(avg_total_test_loss))
+                scheduler.step(validation_loss)
             else:
                 scheduler.step()
         if use_wandb:
             wandb.log({
-                "avg_total_test_loss": np.mean(avg_total_test_loss),
+                "avg_total_test_loss": validation_loss,
                 "lr": optimizer.param_groups[0]["lr"],
             }, commit=False)
 
-        numbered_path = os.path.join(project_folder, f"{epoch}.pth")
         torch.save(checkpoint, latest_path)
-        torch.save(checkpoint, numbered_path)  # keep track of model at every epoch
+        if should_save_numbered_checkpoint(epoch, checkpoint_frequency):
+            numbered_path = os.path.join(
+                project_folder, checkpoint_filename(epoch)
+            )
+            torch.save(checkpoint, numbered_path)
+            print(f"Saved interval checkpoint to {numbered_path}")
+        if save_best_checkpoint and improved:
+            torch.save(checkpoint, best_path)
+            print(
+                f"Saved best checkpoint to {best_path} "
+                f"(validation loss {validation_loss:.6f})"
+            )
+        validation_history.append(ValidationPoint(epoch, validation_loss))
+        csv_path, plot_path = write_validation_artifacts(
+            project_folder,
+            validation_history,
+            csv_filename=validation_history_filename,
+            plot_filename=validation_plot_filename,
+        )
+        print(f"Updated validation artifacts: {csv_path}, {plot_path}")
 
     # Flush the last set of eval logs
     if use_wandb:
@@ -206,6 +245,8 @@ def train_eval_loop_nomad(
         eval_fraction: fraction of training data to use for evaluation
         eval_freq: frequency of evaluation
     """
+    from diffusers.training_utils import EMAModel
+
     latest_path = os.path.join(project_folder, f"latest.pth")
     ema_model = EMAModel(model=model,power=0.75)
     

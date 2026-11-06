@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import wandb
 import os
 import numpy as np
@@ -12,9 +14,6 @@ from vint_train.visualizing.distance_utils import visualize_dist_pred
 from vint_train.visualizing.visualize_utils import to_numpy, from_numpy
 from vint_train.training.logger import Logger
 from vint_train.data.data_utils import VISUALIZATION_IMAGE_SIZE
-from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-from diffusers.training_utils import EMAModel
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -1181,4 +1180,3 @@ def visualize_diffusion_action_distribution(
         plt.close(fig)
     if len(wandb_list) > 0 and use_wandb:
         wandb.log({f"{eval_type}_action_samples": wandb_list}, commit=False)
-

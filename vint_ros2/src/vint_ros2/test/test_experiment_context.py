@@ -89,7 +89,7 @@ def test_full_context_hashes_models_route_and_plugin_configs(tmp_path):
         'vint_full',
         image_goal_params=image_params,
         pointgoal_params=pointgoal_params,
-        route_manifest=route,
+        route_directory=tmp_path,
         image_goal_controller_config=controller,
         pointgoal_planner_config=planner,
     )
@@ -98,7 +98,9 @@ def test_full_context_hashes_models_route_and_plugin_configs(tmp_path):
     pointgoal = context['inference']['pointgoal']
     assert pointgoal['checkpoint']['path'] == str(checkpoint.resolve())
     assert len(pointgoal['checkpoint']['sha256']) == 64
-    route_descriptor = context['inference']['image_goal']['route_manifest']
+    route_directory = context['inference']['image_goal']['route_directory']
+    assert route_directory['route_count'] == 1
+    route_descriptor = route_directory['routes'][0]
     assert route_descriptor['image_count'] == 2
     assert route_descriptor['route_id'] == 'test_route'
     assert len(route_descriptor['content_sha256']) == 64
@@ -182,7 +184,7 @@ def test_hardware_context_cli_rejects_mock_inference(tmp_path):
         main([
             '--mode', 'image_goal_local',
             '--image-goal-params', str(image_params),
-            '--route-manifest', str(route),
+            '--route-directory', str(tmp_path),
             '--image-goal-controller-config', str(image_params),
             '--require-torch',
             '--output', str(tmp_path / 'context.json'),

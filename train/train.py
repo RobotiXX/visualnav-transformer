@@ -14,19 +14,12 @@ from torchvision import transforms
 import torch.backends.cudnn as cudnn
 from warmup_scheduler import GradualWarmupScheduler
 
-from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-from diffusers.optimization import get_scheduler
-
 """
 IMPORT YOUR MODEL HERE
 """
 from vint_train.models.gnm.gnm import GNM
 from vint_train.models.vint.vint import ViNT
 from vint_train.models.vint.pointgoal_vint import PointGoalViNT
-from vint_train.models.vint.vit import ViT
-from vint_train.models.nomad.nomad import NoMaD, DenseNetwork
-from vint_train.models.nomad.nomad_vint import NoMaD_ViNT, replace_bn_with_gn
-from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
 
 
 from vint_train.data.vint_dataset import ViNT_Dataset
@@ -35,6 +28,15 @@ from vint_train.training.train_eval_loop import (
     train_eval_loop_nomad,
     load_model,
 )
+from vint_train.training.training_artifacts import prepare_run_directory
+
+
+def load_trusted_training_checkpoint(path, device="cpu"):
+    """Load a trusted local checkpoint across PyTorch default changes."""
+    try:
+        return torch.load(path, map_location=device, weights_only=False)
+    except TypeError:
+        return torch.load(path, map_location=device)
 
 
 def main(config):
@@ -182,6 +184,17 @@ def main(config):
             pointgoal_hidden_size=config.get("pointgoal_hidden_size", 256),
         )
     elif config["model_type"] == "nomad":
+        from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+        from diffusion_policy.model.diffusion.conditional_unet1d import (
+            ConditionalUnet1D,
+        )
+        from vint_train.models.nomad.nomad import DenseNetwork, NoMaD
+        from vint_train.models.nomad.nomad_vint import (
+            NoMaD_ViNT,
+            replace_bn_with_gn,
+        )
+        from vint_train.models.vint.vit import ViT
+
         if config["vision_encoder"] == "nomad_vint":
             vision_encoder = NoMaD_ViNT(
                 obs_encoding_size=config["encoding_size"],
@@ -296,14 +309,33 @@ def main(config):
             )
 
     current_epoch = 0
+    initial_checkpoint_path = str(
+        config.get("initial_checkpoint_path", "")
+    ).strip()
+    if "load_run" in config and initial_checkpoint_path:
+        raise ValueError(
+            "load_run and initial_checkpoint_path cannot be used together"
+        )
     if "load_run" in config:
-        load_project_folder = os.path.join("logs", config["load_run"])
+        load_project_folder = os.path.join(
+            os.path.expanduser(config.get("log_root", "logs")),
+            config["load_run"],
+        )
         print("Loading model from ", load_project_folder)
         latest_path = os.path.join(load_project_folder, "latest.pth")
-        latest_checkpoint = torch.load(latest_path) #f"cuda:{}" if torch.cuda.is_available() else "cpu")
+        latest_checkpoint = load_trusted_training_checkpoint(latest_path)
         load_model(model, config["model_type"], latest_checkpoint)
         if "epoch" in latest_checkpoint:
             current_epoch = latest_checkpoint["epoch"] + 1
+    elif initial_checkpoint_path:
+        initial_checkpoint_path = os.path.abspath(
+            os.path.expanduser(initial_checkpoint_path)
+        )
+        print("Initializing model weights from", initial_checkpoint_path)
+        initial_checkpoint = load_trusted_training_checkpoint(
+            initial_checkpoint_path
+        )
+        load_model(model, config["model_type"], initial_checkpoint)
 
     # Multi-GPU
     if len(config["gpu_ids"]) > 1:
@@ -346,6 +378,12 @@ def main(config):
             eval_fraction=config["eval_fraction"],
             goal_type=config["goal_type"],
             model_type=config["model_type"],
+            checkpoint_frequency=config["checkpoint_frequency"],
+            save_best_checkpoint=config["save_best_checkpoint"],
+            validation_history_filename=config[
+                "validation_history_filename"
+            ],
+            validation_plot_filename=config["validation_plot_filename"],
         )
     else:
         train_eval_loop_nomad(
@@ -401,14 +439,12 @@ if __name__ == "__main__":
     config.update(user_config)
 
     config["run_name"] += "_" + time.strftime("%Y_%m_%d_%H_%M_%S")
-    config["project_folder"] = os.path.join(
-        "logs", config["project_name"], config["run_name"]
-    )
-    os.makedirs(
-        config[
-            "project_folder"
-        ],  # should error if dir already exists to avoid overwriting and old project
-    )
+    config["project_folder"] = str(prepare_run_directory(
+        config["log_root"],
+        config["project_name"],
+        config["run_name"],
+        args.config,
+    ))
 
     if config["use_wandb"]:
         wandb.login()

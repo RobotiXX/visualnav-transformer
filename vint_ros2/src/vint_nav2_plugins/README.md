@@ -55,10 +55,14 @@ The controller applies
 `v = linear_gain * waypoint_x` and
 `w = angular_gain * atan(waypoint_y / waypoint_x)`, then clamps both commands.
 With the original `4 Hz` model convention, both gains are `4`. Linear velocity
-is clamped to `[0, 0.2] m/s`, and yaw rate is clamped to
+is clamped to `[0, 0.8] m/s` for the ScoutMini study, and yaw rate is clamped to
 `[-0.4, 0.4] rad/s`. When both waypoint coordinates are nearly zero, the model's
 predicted heading supplies the angular command. A negative X value is not an
 adapter error; the original forward clamp turns it into zero linear velocity.
+The paired model profile converts embodiment-normalized points with
+`0.8 m/s / 4 Hz = 0.20 m`. This pairing follows ViNT's robot-specific
+unnormalization contract; a 1.0 m/s experiment requires both a 0.25 m action
+scale and a 1.0 m/s clamp.
 
 The YAML file documents every parameter in place. The most important groups
 are:

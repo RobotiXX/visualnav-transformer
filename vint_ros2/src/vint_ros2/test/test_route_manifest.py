@@ -6,6 +6,7 @@ import pytest
 import yaml
 
 from vint_ros2.route_manifest import RouteManifestError
+from vint_ros2.route_manifest import load_route_directory
 from vint_ros2.route_manifest import load_route_manifest
 
 
@@ -35,6 +36,7 @@ def _manifest() -> dict:
 
 
 def _write_manifest(tmp_path: Path, data: dict) -> Path:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     path = tmp_path / 'route.yaml'
     path.write_text(yaml.safe_dump(data), encoding='utf-8')
     return path
@@ -89,3 +91,28 @@ def test_rejects_invalid_contracts(tmp_path, mutation, message):
 def test_requires_images_by_default(tmp_path):
     with pytest.raises(RouteManifestError, match='does not exist'):
         load_route_manifest(_write_manifest(tmp_path, _manifest()))
+
+
+def test_route_directory_loads_nested_directional_routes(tmp_path):
+    route_a = _manifest()
+    route_b = _manifest()
+    route_b['route_id'] = 'b_to_c'
+    route_b['source_waypoint_id'] = 'test.floor_1.b'
+    route_b['destination_waypoint_id'] = 'test.floor_1.c'
+    _write_manifest(tmp_path / 'a_to_b', route_a)
+    _write_manifest(tmp_path / 'b_to_c', route_b)
+
+    routes = load_route_directory(tmp_path, require_images=False)
+
+    assert [route.route_id for route in routes] == ['a_to_b', 'b_to_c']
+
+
+def test_route_directory_rejects_duplicate_semantic_direction(tmp_path):
+    route_a = _manifest()
+    route_b = _manifest()
+    route_b['route_id'] = 'second_recording'
+    _write_manifest(tmp_path / 'first', route_a)
+    _write_manifest(tmp_path / 'second', route_b)
+
+    with pytest.raises(RouteManifestError, match='more than one'):
+        load_route_directory(tmp_path, require_images=False)

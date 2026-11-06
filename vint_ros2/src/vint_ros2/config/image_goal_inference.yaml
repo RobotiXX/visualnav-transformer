@@ -13,12 +13,17 @@ vint_image_goal_inference:
     checkpoint_path: ""
     model_config_path: ""
     device: cuda
-    route_manifest: ""
+    # Directory recursively containing one converted route.yaml per deployed
+    # source/destination direction. Duplicate semantic directions are rejected.
+    route_directory: ""
     # The robot adapter owns any vendor-specific camera remapping.
     image_topic: /camera/image/compressed
     image_type: compressed
+    # Fail closed until this latched topic identifies the current occupancy map.
+    map_name_topic: /map_name
     global_plan_topic: /vint/image_goal/global_plan
     prediction_topic: /vint/image_goal/predicted_path
+    selected_route_topic: /vint/image_goal/selected_route
     robot_frame: base_link
     # Match the original deployment frame rate and local-topomap search.
     inference_rate_hz: 4.0
@@ -26,7 +31,10 @@ vint_image_goal_inference:
     topomap_radius: 4
     # Advance to the next route image when minimum predicted distance <= 3.
     close_threshold: 3.0
-    # Nav2 integration only: reject a plan for a different route destination.
-    route_destination_tolerance_m: 1.0
+    # Select a directional route by the current map and global-plan endpoints.
+    route_source_tolerance_m: 3.0
+    route_destination_tolerance_m: 3.0
+    # Reject two endpoint matches whose total errors differ by no more than this.
+    route_selection_ambiguity_m: 0.25
     # Rate-limit repeated warnings without changing failure behavior.
     warning_throttle_sec: 2.0

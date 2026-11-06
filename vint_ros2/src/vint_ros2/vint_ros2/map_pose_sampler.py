@@ -5,6 +5,7 @@ import time
 from geometry_msgs.msg import PoseStamped
 import rclpy
 from rclpy.duration import Duration
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
@@ -27,12 +28,17 @@ def pose_from_transform(transform, stamp, frame_id: str) -> PoseStamped:
     return pose
 
 
+def create_sampler_executor(context=None) -> MultiThreadedExecutor:
+    """Create an executor that can receive TF while an image lookup waits."""
+    return MultiThreadedExecutor(num_threads=2, context=context)
+
+
 class MapPoseSampler(Node):
     """Look up and publish the robot map pose when each image arrives."""
 
-    def __init__(self) -> None:
+    def __init__(self, **node_kwargs) -> None:
         """Initialize parameters, TF access, and the camera subscription."""
-        super().__init__('vint_map_pose_sampler')
+        super().__init__('vint_map_pose_sampler', **node_kwargs)
         self.declare_parameter('image_topic', '/camera/image_raw')
         self.declare_parameter('image_type', 'raw')
         self.declare_parameter('output_topic', '/vint/map_pose')
@@ -105,11 +111,14 @@ def main(args=None) -> None:
     """Run the timestamp-aligned map-pose sampler."""
     rclpy.init(args=args)
     node = MapPoseSampler()
+    executor = create_sampler_executor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
+        executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()
 
